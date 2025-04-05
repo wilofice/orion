@@ -18,7 +18,7 @@ def get_calendar_service():
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(
-                're.json', SCOPES)
+                'credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
         with open('token.json', 'w') as token:
@@ -35,3 +35,22 @@ def create_event(event):
     service = get_calendar_service()
     created_event = service.events().insert(calendarId='primary', body=event).execute()
     return created_event
+
+
+def schedule_event(startDate, startTime, endDate, endTime, topic, description, timeZone):
+    event = {
+        'summary': topic,
+        'description': description,
+        'start': {
+            'dateTime': f'{startDate}T{startTime}',
+            'timeZone': timeZone,
+        },
+        'end': {
+            'dateTime': f'{endDate}T{endTime}',
+            'timeZone': timeZone,
+        },
+        'attendees': [],
+    }
+
+    create_event(event)
+    return event
