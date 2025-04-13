@@ -32,9 +32,14 @@ def get_events():
     return events
 
 def create_event(event):
-    service = get_calendar_service()
-    created_event = service.events().insert(calendarId='primary', body=event).execute()
-    return created_event
+    try:
+        service = get_calendar_service()
+        created_event = service.events().insert(calendarId='primary', body=event).execute()
+        return created_event
+    except Exception as e:
+        # Log the error or handle it appropriately
+        print(f"An error occurred while creating the event: {e}")
+        return None
 
 
 def schedule_event(startDate, startTime, endDate, endTime, topic, description, timeZone):
@@ -52,5 +57,5 @@ def schedule_event(startDate, startTime, endDate, endTime, topic, description, t
         'attendees': [],
     }
 
-    create_event(event)
-    return event
+    response = create_event(event)
+    return response
