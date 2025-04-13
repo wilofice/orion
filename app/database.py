@@ -7,7 +7,7 @@ load_dotenv()
 
 # MongoDB connection URI
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "mydatabase")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "orion")
 
 # Create a MongoDB client
 client = MongoClient(MONGO_URI)
