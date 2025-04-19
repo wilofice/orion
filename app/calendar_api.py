@@ -52,5 +52,4 @@ def schedule_event(startDate, startTime, endDate, endTime, topic, description, t
         'attendees': [],
     }
 
-    create_event(event)
-    return event
+    return create_event(event)

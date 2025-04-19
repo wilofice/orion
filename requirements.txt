@@ -5,3 +5,4 @@ pymongo
 google-api-python-client
 google-genai
 google_auth_oauthlib
+fastapi[standard]
