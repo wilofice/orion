@@ -1,11 +1,18 @@
+from datetime import date, datetime, time, timedelta
 from pydantic import BaseModel
-from datetime import time, date
+
 class Event(BaseModel):
     startTime: time
     endTime: time
-    startDate: date
     endDate: date
+    startDate: date
     topic: str
     description: str
-    attendees: list
-    timeZone: str
+    attendees: list[str]
+
+
+# print(
+#     Event(
+#         name='Apple',
+#     )
+# )
