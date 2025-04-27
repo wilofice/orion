@@ -15,6 +15,7 @@ def handle_user_input(user_input):
     # Parse AI response to check if it includes a function call
     result = parse_ai_response(ai_response)
     if result is not None:
+
         st.session_state.chat_history.append({"user": user_input, "ai": "Event scheduled successfully!"})
     else:
         st.session_state.chat_history.append({"user": user_input, "ai": "AI: I couldn't process your request."})

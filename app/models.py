@@ -9,10 +9,3 @@ class Event(BaseModel):
     topic: str
     description: str
     attendees: list[str]
-
-
-# print(
-#     Event(
-#         name='Apple',
-#     )
-# )

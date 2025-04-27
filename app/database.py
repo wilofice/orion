@@ -43,3 +43,31 @@ def get_all_documents(collection_name):
     """
     collection = get_collection(collection_name)
     return list(collection.find())
+
+
+def get_filtered_events(collection_name, startDate, startTime, endDate, endTime):
+    """
+    Retrieves events from the specified collection that fall within the given date and time range.
+    """
+    collection = get_collection(collection_name)
+
+    # Construct the query
+    query = {
+        "$and": [
+            {
+                "$or": [
+                    {"startDate": {"$gt": startDate}},
+                    {"startDate": {"$eq": startDate}, "startTime": {"$gte": startTime}}
+                ]
+            },
+            {
+                "$or": [
+                    {"endDate": {"$lt": endDate}},
+                    {"endDate": {"$eq": endDate}, "endTime": {"$lte": endTime}}
+                ]
+            }
+        ]
+    }
+
+    # Execute the query and return the results
+    return list(collection.find(query))
