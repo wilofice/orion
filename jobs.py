@@ -70,15 +70,33 @@ def get_available_time_slots(startDate, startTime, endDate, endTime):
         except ValidationError as e:
             print(f"Validation error for event: {event}. Error: {e}")
 
+    # Sort planned_slots by event_start (first element of each tuple)
+    planned_slots.sort(key=lambda x: x[0])
+
     # Generate all 20-minute slots within the range
     available_slots = []
     current_slot = start_datetime
     while current_slot < end_datetime:
         next_slot = current_slot + timedelta(minutes=20)
+        if next_slot > end_datetime:
+            next_slot = end_datetime
         # Check if the slot overlaps with any planned event
-        if not any(event_start < next_slot and event_end > current_slot for event_start, event_end in planned_slots):
+        slot_is_available = True
+        for event_start, event_end in planned_slots:
+            # An overlap occurs if the event either starts during the slot
+            # or ends during the slot, or completely encompasses the slot
+            if (current_slot <= event_start < next_slot) or \
+               (current_slot < event_end <= next_slot) or \
+               (event_start <= current_slot and event_end >= next_slot):
+                slot_is_available = False
+                # Move the current slot to the end of the overlapping event
+                current_slot = max(current_slot, event_end)
+                break
+        if slot_is_available:
             available_slots.append((current_slot, next_slot))
-        current_slot = next_slot
+            current_slot = next_slot
+        else:
+            current_slot = min(current_slot, end_datetime)
 
     # Format the available slots as strings
     return [

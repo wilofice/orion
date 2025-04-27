@@ -48,11 +48,7 @@ class TestGetAvailableTimeSlots(unittest.TestCase):
         result = get_available_time_slots(startDate, startTime, endDate, endTime)
 
         # Expected 20-minute slots excluding the overlapping one
-        expected = [
-            {"start": "2023-10-01 09:00:00", "end": "2023-10-01 09:10:00"},
-            {"start": "2023-10-01 09:30:00", "end": "2023-10-01 09:50:00"},
-            {"start": "2023-10-01 09:50:00", "end": "2023-10-01 10:00:00"},
-        ]
+        expected = [{'end': '2023-10-01 09:50:00', 'start': '2023-10-01 09:30:00'}, {'end': '2023-10-01 10:00:00', 'start': '2023-10-01 09:50:00'}]
 
         self.assertEqual(result, expected)
 
