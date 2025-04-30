@@ -6,11 +6,7 @@ from datetime import datetime, timedelta, date, time
 from typing import List, Dict, Any, Optional
 
 # Assuming models.py is in the same directory or accessible via PYTHONPATH
-try:
-    from .models import TimeSlot
-except ImportError:
-    # Fallback for running script directly or if structure differs
-    from models import TimeSlot
+from models import TimeSlot
 
 from google.oauth2.credentials import Credentials as GoogleCredentials
 from google.auth.transport.requests import Request
@@ -18,6 +14,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build, Resource
 from googleapiclient.errors import HttpError
 import os.path # To handle credential file paths
+from scheduler import filter_slots_by_preferences # Import the new function
+from models import UserPreferences
 
 # --- Configuration ---
 # TODO: Move configuration details (like scopes, paths) to a config file/env vars
@@ -65,7 +63,7 @@ class AbstractCalendarClient(ABC):
         pass
 
     @abstractmethod
-    def get_available_time_slots(self, calendar_id: str, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    def get_available_time_slots(self, calendar_id: str, preferences: UserPreferences, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
         """Gets available (free) time slots for a given calendar and time range."""
         pass
 
@@ -323,7 +321,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
                             busy_slots.append(TimeSlot(start_time=clamped_start, end_time=clamped_end))
                             self.logger.debug(f"Added busy slot: {clamped_start} - {clamped_end} from event '{event.get('summary', 'N/A')}'")
                         else:
-                             self.logger.debug(f"Event '{event.get('summary', 'N/A')}' ({event_start} - {event_end}) falls outside query window after clamping.")
+                            self.logger.debug(f"Event '{event.get('summary', 'N/A')}' ({event_start} - {event_end}) falls outside query window after clamping.")
 
                 page_token = events_result.get('nextPageToken')
                 if not page_token:
@@ -419,13 +417,19 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
     #             merged.append(current)
     #     return merged
 
-    def get_available_time_slots(self, calendar_id: str, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    def get_available_time_slots(
+            self,
+            preferences: UserPreferences,  # Add UserPreferences as input
+            calendar_id: str,
+            start_time: datetime,
+            end_time: datetime
+    ) -> List[TimeSlot]:
         """
-        Gets available (free) time slots for a given calendar and time range.
-
-        This orchestrates fetching busy slots and calculating the inverse free slots.
+        Gets available (free) time slots considering both calendar events
+        and user preferences.
 
         Args:
+            preferences: The UserPreferences object for the user.
             calendar_id: Identifier of the calendar.
             start_time: The start of the query range (timezone-aware).
             end_time: The end of the query range (timezone-aware).
@@ -436,14 +440,20 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
         Raises:
             APICallError, AuthenticationError, ValueError as per underlying methods.
         """
-        self.logger.info(f"Getting available time slots for calendar '{calendar_id}'")
-        # Step 1: Get busy slots
-        busy_slots = self.get_busy_slots(calendar_id, start_time, end_time)
+        self.logger.info(f"Getting available time slots for calendar '{calendar_id}' considering preferences.")
 
-        # Step 2: Calculate free slots from busy slots
-        free_slots = self.calculate_free_slots(busy_slots, start_time, end_time)
+        # Step 1: Get busy slots from the calendar API
+        calendar_busy_slots = self.get_busy_slots(calendar_id, start_time, end_time)
 
-        return free_slots
+        # Step 2: Calculate the raw free slots based on calendar busy times
+        # (Uses the calculate_free_slots method already defined in this class)
+        raw_free_slots = self.calculate_free_slots(calendar_busy_slots, start_time, end_time)
+
+        # Step 3: Filter the raw free slots using user preferences
+        filtered_free_slots = filter_slots_by_preferences(raw_free_slots, preferences)
+
+        self.logger.info(f"Calculated {len(filtered_free_slots)} final available slots after applying preferences.")
+        return filtered_free_slots
 
 
 # --- Example Usage ---
