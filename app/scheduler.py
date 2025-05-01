@@ -347,8 +347,8 @@ def filter_slots_by_preferences(
         ValueError: If timeslots or preferences contain invalid timezone info.
         pytz.UnknownTimeZoneError: If preferences.time_zone is invalid.
     """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Filtering {len(raw_free_slots)} raw free slots by user preferences.")
+    filter_logger = logging.getLogger(__name__)
+    filter_logger.info(f"Filtering {len(raw_free_slots)} raw free slots by user preferences.")
 
     if not raw_free_slots:
         return []
@@ -356,16 +356,16 @@ def filter_slots_by_preferences(
     try:
         user_tz = pytz.timezone(preferences.time_zone)
     except pytz.UnknownTimeZoneError as e:
-        logger.error(f"Invalid timezone in preferences: {preferences.time_zone}")
+        filter_logger.error(f"Invalid timezone in preferences: {preferences.time_zone}")
         raise e
 
     filtered_slots: List[TimeSlot] = []
 
-    for slot in raw_free_slots:
-        logger.debug(f"Processing raw slot: {slot.start_time} - {slot.end_time}")
+    for raw_slot in raw_free_slots:
+        filter_logger.debug(f"Processing raw slot: {raw_slot.start_time} - {raw_slot.end_time}")
         # Ensure slot times are in user's timezone for daily comparison
-        slot_start_user_tz = slot.start_time.astimezone(user_tz)
-        slot_end_user_tz = slot.end_time.astimezone(user_tz)
+        slot_start_user_tz = raw_slot.start_time.astimezone(user_tz)
+        slot_end_user_tz = raw_slot.end_time.astimezone(user_tz)
 
         # Iterate through each day covered by the slot
         current_day = slot_start_user_tz.date()
@@ -376,12 +376,12 @@ def filter_slots_by_preferences(
             end_date = (slot_end_user_tz - timedelta(microseconds=1)).date()
 
         while current_day <= end_date:
-            logger.debug(f"  Checking day: {current_day}")
+            filter_logger.debug(f"  Checking day: {current_day}")
 
             # Check if this day is a day off
             is_day_off = current_day in preferences.days_off
             if is_day_off:
-                logger.debug(f"    Day {current_day} is a day off. Skipping.")
+                filter_logger.debug(f"    Day {current_day} is a day off. Skipping.")
                 current_day += timedelta(days=1)
                 continue  # Skip to the next day within the slot
 
@@ -390,7 +390,7 @@ def filter_slots_by_preferences(
             working_times = preferences.working_hours.get(weekday)
 
             if not working_times:
-                logger.debug(f"    No working hours defined for {current_day} ({weekday.name}). Skipping.")
+                filter_logger.debug(f"    No working hours defined for {current_day} ({weekday.name}). Skipping.")
                 current_day += timedelta(days=1)
                 continue  # Skip to the next day within the slot
 
@@ -407,17 +407,17 @@ def filter_slots_by_preferences(
 
             # If intersection_end > intersection_start, there is a valid overlap
             if intersection_end > intersection_start:
-                logger.debug(
+                filter_logger.debug(
                     f"    Found valid intersection on {current_day}: {intersection_start} - {intersection_end}")
                 try:
                     filtered_slots.append(TimeSlot(start_time=intersection_start, end_time=intersection_end))
                 except ValueError as e:
                     # Should not happen if logic is correct, but catch just in case
-                    logger.error(f"Error creating TimeSlot for intersection on {current_day}: {e}")
+                    filter_logger.error(f"Error creating TimeSlot for intersection on {current_day}: {e}")
 
             current_day += timedelta(days=1)
 
-    logger.info(f"Filtered down to {len(filtered_slots)} slots matching preferences.")
+    filter_logger.info(f"Filtered down to {len(filtered_slots)} slots matching preferences.")
     # Sort final list as intersections might be added out of order if a slot spans multiple days
     filtered_slots.sort(key=lambda s: s.start_time)
     return filtered_slots
