@@ -1,5 +1,5 @@
 # Example Usage section from app/scheduler_logic.py
-from app.scheduler import filter_slots_by_preferences
+from app.scheduler_logic import filter_slots_by_preferences
 
 # --- Example Usage ---
 if __name__ == '__main__':

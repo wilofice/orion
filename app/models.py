@@ -39,6 +39,7 @@ class ActivityCategory(str, Enum):
     CHORE = "CHORE"
     ERRAND = "ERRAND"
     OTHER = "OTHER" # Added for flexibility
+    FUN = "FUN" # Added for flexibility
 
 class ActivityStatus(str, Enum):
     """Enum for WantToDoActivity status."""
