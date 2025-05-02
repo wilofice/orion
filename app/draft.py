@@ -1,8 +1,11 @@
 # Example Usage section from app/scheduler_logic.py
-from app.scheduler_logic import filter_slots_by_preferences
+from app.scheduler import filter_slots_by_preferences
 
 # --- Example Usage ---
 if __name__ == '__main__':
+    run_slot_filtering_demo()
+
+def run_slot_filtering_demo():
     import logging
     from datetime import datetime, timedelta, date, time
     import pytz # For robust timezone handling

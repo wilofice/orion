@@ -26,7 +26,6 @@ API_PREFIX = f"/{API_VERSION}"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
 def get_session_manager() -> AbstractSessionManager:
     # Replace with logic to get/create a session manager instance
     # Might involve getting DB connection from another dependency

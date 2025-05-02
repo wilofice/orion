@@ -6,112 +6,148 @@ from typing import List, Dict, Any, Optional
 
 # --- Interface Imports ---
 # Assuming interfaces and models from previous tasks are defined and importable
-try:
     # From Task ORCH-3 / main.py
-    from endpoints import ChatRequest, ChatResponse, ResponseStatus, ErrorDetail # Or wherever these are defined
-    # From Task ORCH-4 / gemini_interface.py
-    from gemini_interface import (GeminiRequest, GeminiResponse, ConversationTurn,
-                                   ToolDefinition, ResponseType, FunctionCall, ToolResult,
-                                   ConversationRole)
-    # From Task ORCH-5 / tool_interface.py
-    from tool_interface import ExecutionContext, ExecutorToolResult, ToolResultStatus
-    # From Task ORCH-7 / session_manager.py
-    from session_manager import AbstractSessionManager
-    # From Task ORCH-6 / tool_wrappers.py (for TOOL_REGISTRY concept)
-    # from .tool_wrappers import TOOL_REGISTRY # Conceptual import
-    # From models.py (Task 1)
-    from models import UserPreferences
-    # From calendar_api.py (Task 2)
-    from calendar_api import AbstractCalendarClient
+from endpoints import ChatRequest, ChatResponse, ResponseStatus, ErrorDetail # Or wherever these are defined
+# From Task ORCH-4 / gemini_interface.py
+from gemini_interface import (GeminiRequest, GeminiResponse, ConversationTurn,
+                               ToolDefinition, ResponseType, FunctionCall, ToolResult,
+                               ConversationRole)
+# From Task ORCH-5 / tool_interface.py
+from tool_interface import ExecutionContext, ExecutorToolResult, ToolResultStatus
+# From Task ORCH-7 / session_manager.py
+from session_manager import AbstractSessionManager
+# From Task ORCH-6 / tool_wrappers.py (for TOOL_REGISTRY concept)
+# from .tool_wrappers import TOOL_REGISTRY # Conceptual import
+# From models.py (Task 1)
+from models import UserPreferences
+# From calendar_api.py (Task 2)
+from calendar_api import AbstractCalendarClient
 
-    # --- Placeholder Interfaces/Implementations ---
-    # Define dummy classes if real ones aren't available yet
-    class AbstractGeminiClient:
-        async def send_to_gemini(self, request: GeminiRequest) -> GeminiResponse:
-            # Dummy implementation
-            logger.info("Dummy Gemini Client: Processing request...")
-            # Simulate function call on first turn if prompt mentions 'schedule'
-            last_user_prompt = ""
-            if request.history and request.history[-1].role == ConversationRole.USER:
-                 # Assuming text is the first part
-                 if isinstance(request.history[-1].parts[0], str):
-                    last_user_prompt = request.history[-1].parts[0]
+# --- Placeholder Interfaces/Implementations ---
+# Define dummy classes if real ones aren't available yet
+class AbstractGeminiClient:
+    async def send_to_gemini(self, request: GeminiRequest) -> GeminiResponse:
+        logger.info("Sending request to Gemini API...")
 
-
-            if "schedule" in last_user_prompt.lower() and len(request.history) <= 1: # Only call function on first relevant prompt
-                 logger.info("Dummy Gemini Client: Simulating function call response.")
-                 return GeminiResponse(
-                     response_type=ResponseType.FUNCTION_CALL,
-                     function_call=FunctionCall(name="schedule_activity", args={"title": "Extracted Task", "duration_minutes": 60, "category_str": "WORK"})
-                 )
-            elif request.history and request.history[-1].role == ConversationRole.FUNCTION:
-                 logger.info("Dummy Gemini Client: Simulating text response after function call.")
-                 tool_resp = request.history[-1].parts[0] # Assuming ToolResult is the first part
-                 return GeminiResponse(
-                     response_type=ResponseType.TEXT,
-                     text=f"OK, I processed the tool result: {tool_resp.response.get('message', 'Done.')}"
-                 )
-            else:
-                 logger.info("Dummy Gemini Client: Simulating simple text response.")
-                 return GeminiResponse(
-                     response_type=ResponseType.TEXT,
-                     text=f"Understood: '{last_user_prompt}'. Processing complete."
-                 )
-
-    class AbstractToolExecutor:
-         async def execute_tool(self, call: FunctionCall, context: ExecutionContext) -> ExecutorToolResult:
-             # Dummy implementation
-             logger.info(f"Dummy Tool Executor: Executing '{call.name}'...")
-             if call.name == "schedule_activity":
-                 # Simulate success
-                 return ExecutorToolResult(
-                     name=call.name,
-                     status=ToolResultStatus.SUCCESS,
-                     result={"message": "Dummy: Activity scheduled.", "event_id": f"evt_{uuid.uuid4()}"}
-                 )
-             else:
-                 return ExecutorToolResult(
-                     name=call.name,
-                     status=ToolResultStatus.ERROR,
-                     error_details=f"Dummy: Unknown tool '{call.name}'"
-                 )
-
-    # Dummy function to get preferences (replace with real implementation)
-    async def get_user_preferences(user_id: str) -> UserPreferences:
-        logger.warning(f"Using DUMMY UserPreferences for user {user_id}")
-        # Need a minimal UserPreferences object that passes validation if used
-        class DummyPrefs(UserPreferences):
-            def __init__(self, user_id: str):
-                self.user_id = user_id
-                self.time_zone = "UTC"  # Must be valid
-                self.working_hours = {}  # Must be dict
-                self.days_off = []
-
-        return DummyPrefs(user_id)
-
-    # Dummy Tool Registry (replace with real one from tool_wrappers.py)
-    DUMMY_TOOL_DEFINITIONS: List[ToolDefinition] = [
-        {
-            "name": "schedule_activity",
-            "description": "Schedules a task or event.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Task title"},
-                    "duration_minutes": {"type": "integer", "description": "Duration in minutes"},
-                    "category_str": {"type": "string", "description": "Category (WORK, PERSONAL)"},
-                    # Add other params as needed by the wrapper/schema
-                },
-                "required": ["title"]
+        # Prepare the tools for the request
+        tools = [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
             }
+            for tool in request.tools
+        ]
+
+        # Configure the request payload
+        payload = {
+            "model": "gemini-2.0-flash",
+            "contents": [turn.parts[0] for turn in request.history if turn.role == ConversationRole.USER],
+            "config": {
+                "tools": tools,
+            },
         }
-    ]
 
+        try:
+            # Call the Gemini API
+            with open('config.json') as config_file:
+                config = json.load(config_file)
+                api_key = config['api_key']
+            client = genai.Client(api_key=api_key)  # Replace with actual API key
+            response = client.models.generate_content(**payload)
 
-except ImportError as e:
-    logger = logging.getLogger(__name__)
-    logger.error(f"Failed to import dependencies for orchestration service: {e}. Service may not function.")
+            # Parse the response
+            if response.candidates[0].content.parts[0].function_call:
+                function_call = response.candidates[0].content.parts[0].function_call
+                logger.info(f"Received FUNCTION_CALL response: {function_call.name}")
+                return GeminiResponse(
+                    response_type=ResponseType.FUNCTION_CALL,
+                    function_call=FunctionCall(
+                        name=function_call.name,
+                        args=function_call.args,
+                    ),
+                )
+            elif response.candidates[0].content.parts[0].text:
+                text = response.candidates[0].content.parts[0].text
+                logger.info("Received TEXT response.")
+                return GeminiResponse(
+                    response_type=ResponseType.TEXT,
+                    text=text,
+                )
+            else:
+                logger.error("Unexpected response format from Gemini API.")
+                return GeminiResponse(
+                    response_type=ResponseType.ERROR,
+                    error_message="Unexpected response format from Gemini API.",
+                )
 
+        except Exception as e:
+            logger.exception("Error while communicating with Gemini API.")
+            return GeminiResponse(
+                response_type=ResponseType.ERROR,
+                error_message=str(e),
+            )
+
+class AbstractToolExecutor:
+    async def execute_tool(call: FunctionCall, context: ExecutionContext) -> ExecutorToolResult:
+        """
+        Executes the requested function call using the provided context.
+
+        Args:
+            call: The FunctionCall object parsed from the Gemini response.
+            context: The ExecutionContext containing user prefs, clients, etc.
+
+        Returns:
+            An ExecutorToolResult indicating the outcome.
+        """
+        logger = logging.getLogger(__name__)
+        logger.info(f"Executing tool: {call.name}")
+
+        # Step 1: Find the appropriate tool wrapper
+        tool_wrapper = TOOL_REGISTRY.get(call.name)
+        if not tool_wrapper:
+            logger.error(f"Tool '{call.name}' not found in TOOL_REGISTRY.")
+            return ExecutorToolResult(
+                name=call.name,
+                status=ToolResultStatus.ERROR,
+                error_details=f"Tool '{call.name}' not found."
+            )
+
+        try:
+            # Step 3: Call the wrapper function with call.args and context
+            return await tool_wrapper.execute(call.args, context)
+        except Exception as e:
+            logger.exception(f"Error while executing tool '{call.name}': {e}")
+            return ExecutorToolResult(
+                name=call.name,
+                status=ToolResultStatus.ERROR,
+                error_details=f"An error occurred while executing tool '{call.name}': {str(e)}"
+            )
+
+# Dummy function to get preferences (replace with real implementation)
+async def get_user_preferences(user_id: str) -> UserPreferences:
+    logger.warning(f"Using DUMMY UserPreferences for user {user_id}")
+    # Need a minimal UserPreferences object that passes validation if used
+    class DummyPrefs(UserPreferences):
+        def __init__(self, user_id: str):
+            self.user_id = user_id
+            self.time_zone = "UTC"  # Must be valid
+            self.working_hours = {}  # Must be dict
+            self.days_off = []
+
+    return DummyPrefs(user_id)
+
+# Tool Registry
+from tool_wrappers import TOOL_REGISTRY
+
+TOOL_DEFINITIONS: List[ToolDefinition] = [
+    {
+        "name": tool_name,
+        "description": tool_wrapper.description,
+        "parameters": tool_wrapper.parameters_schema,
+    }
+    for tool_name, tool_wrapper in TOOL_REGISTRY.items()
+]
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +204,7 @@ async def handle_chat_request(
         await session_manager.append_turn(session_id, user_turn) # Persist user turn
 
         # 8.3 Get available tools (replace DUMMY with actual registry access)
-        available_tools = DUMMY_TOOL_DEFINITIONS # Task ORCH-7
+        available_tools = TOOL_DEFINITIONS # Task ORCH-7
 
         while current_turn < turn_limit:
             current_turn += 1
