@@ -14,7 +14,7 @@ class Event(BaseModel):
 import uuid
 from datetime import date, datetime, time, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import pytz  # Recommended for robust timezone handling
 from pydantic import (BaseModel, Field, field_validator,
@@ -254,6 +254,32 @@ class UserPreferences(BaseModel):
                     raise ValueError(f"Invalid or non-positive duration for category {category}: {duration}")
         return v
 
+
+class ChatRequest(BaseModel):
+    """Request model for the chat prompt endpoint."""
+    user_id: str = Field(..., description="Unique identifier for the user making the request.")
+    session_id: Optional[str] = Field(None, description="Optional identifier for the ongoing chat session. Helps maintain conversation history.")
+    prompt_text: str = Field(..., description="The natural language input from the user.")
+    client_context: Optional[Dict[str, Any]] = Field(None, description="Optional arbitrary JSON object providing client-side context (e.g., current view, timezone).")
+
+class ResponseStatus(str, Enum):
+    """Enum for the status field in ChatResponse."""
+    COMPLETED = "completed"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    ERROR = "error"
+
+class ChatResponse(BaseModel):
+    """Response model for a successful chat prompt processing."""
+    session_id: str = Field(..., description="Identifier for the chat session (can be new or existing).")
+    status: ResponseStatus = Field(..., description="Indicates the outcome of processing the prompt.")
+    response_text: Optional[str] = Field(None, description="The natural language response to be displayed to the user. Required unless status is 'error'.")
+    clarification_options: Optional[List[str]] = Field(None, description="Optional list of suggestions or options if status is 'needs_clarification'.")
+
+class ErrorDetail(BaseModel):
+    """Schema for standard error responses."""
+    error_code: str = Field(..., description="A unique code identifying the type of error.")
+    message: str = Field(..., description="A user-friendly error message.")
+    details: Optional[Dict[str, Any]] = Field(None, description="Optional additional details about the error.")
 # --- Example Usage (Optional, for testing/demonstration) ---
 
 if __name__ == "__main__":

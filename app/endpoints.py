@@ -16,7 +16,7 @@ from session_manager import AbstractSessionManager, MongoSessionManager
 from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
 from calendar_api import AbstractCalendarClient, GoogleCalendarAPIClient
-
+from models import ChatRequest, ChatResponse, ErrorDetail, ResponseStatus
 # --- Configuration ---
 # In a real app, use environment variables or a config file
 API_VERSION = "v1"
@@ -60,32 +60,6 @@ def get_calendar_client() -> AbstractCalendarClient:
         raise HTTPException(status_code=503, detail="Calendar service client unavailable.")
 
 # --- Pydantic Schemas (Task 3.2, 3.3, 3.4) ---
-
-class ChatRequest(BaseModel):
-    """Request model for the chat prompt endpoint."""
-    user_id: str = Field(..., description="Unique identifier for the user making the request.")
-    session_id: Optional[str] = Field(None, description="Optional identifier for the ongoing chat session. Helps maintain conversation history.")
-    prompt_text: str = Field(..., description="The natural language input from the user.")
-    client_context: Optional[Dict[str, Any]] = Field(None, description="Optional arbitrary JSON object providing client-side context (e.g., current view, timezone).")
-
-class ResponseStatus(str, Enum):
-    """Enum for the status field in ChatResponse."""
-    COMPLETED = "completed"
-    NEEDS_CLARIFICATION = "needs_clarification"
-    ERROR = "error"
-
-class ChatResponse(BaseModel):
-    """Response model for a successful chat prompt processing."""
-    session_id: str = Field(..., description="Identifier for the chat session (can be new or existing).")
-    status: ResponseStatus = Field(..., description="Indicates the outcome of processing the prompt.")
-    response_text: Optional[str] = Field(None, description="The natural language response to be displayed to the user. Required unless status is 'error'.")
-    clarification_options: Optional[List[str]] = Field(None, description="Optional list of suggestions or options if status is 'needs_clarification'.")
-
-class ErrorDetail(BaseModel):
-    """Schema for standard error responses."""
-    error_code: str = Field(..., description="A unique code identifying the type of error.")
-    message: str = Field(..., description="A user-friendly error message.")
-    details: Optional[Dict[str, Any]] = Field(None, description="Optional additional details about the error.")
 
 
 # --- Authentication Dependency (Task 3.4 / Guideline) ---
