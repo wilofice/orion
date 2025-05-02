@@ -124,6 +124,73 @@ class ScheduleActivityWrapper(ToolWrapper):
     """
     tool_name = "schedule_activity"
     logger = logging.getLogger(__name__)
+    def _handle_fixed_time_scheduling(
+        self,
+        title: str,
+        start_time: datetime,
+        end_time: datetime,
+        description: Optional[str],
+        context: ExecutionContext
+    ) -> ExecutorToolResult:
+        """Handles scheduling when specific start and end times are provided."""
+        self.logger.info(f"Handling fixed time schedule request: '{title}' from {start_time} to {end_time}")
+
+        try:
+            # 1. Check for conflicts directly on the calendar
+            # We check for *any* busy slot within the exact requested time frame.
+            # We assume get_busy_slots returns events that *overlap* the given range.
+            # We need to be careful about events ending exactly when the new one starts, or vice-versa.
+            # Let's check for busy slots slightly within the range to avoid boundary issues.
+            check_start = start_time + timedelta(microseconds=1)
+            check_end = end_time - timedelta(microseconds=1)
+
+            # Ensure check range is valid if duration is very short
+            if check_start >= check_end:
+                 check_start = start_time
+                 check_end = end_time
+
+            self.logger.debug(f"Checking for conflicts between {check_start} and {check_end}")
+            # Get busy slots from the calendar client : make method call async later
+            conflicting_busy_slots = context.calendar_client.get_busy_slots(
+                calendar_id='primary', # Assuming primary for now
+                start_time=check_start,
+                end_time=check_end
+            )
+
+            if conflicting_busy_slots:
+                # Conflict detected
+                conflict_details = ", ".join([f"'{getattr(slot.activity_obj, 'title', 'Unknown Event')}' ({slot.start_time.time()} - {slot.end_time.time()})"
+                                            for slot in conflicting_busy_slots if hasattr(slot, 'activity_obj')]) # Check if dummy slots have activity_obj
+                if not conflict_details: conflict_details = f"{len(conflicting_busy_slots)} existing event(s)" # Fallback message
+                error_msg = f"Cannot schedule '{title}' at the requested time because it conflicts with: {conflict_details}."
+                self.logger.warning(error_msg)
+                return self._create_error_result(error_msg, result_data={"conflicts": [str(s) for s in conflicting_busy_slots]}) # Pass conflict details if needed
+
+            # 2. No conflict, add the event to the calendar
+            self.logger.info(f"No conflicts found. Adding event '{title}' to calendar.")
+            # Conceptual call - AbstractCalendarClient needs an add_event method
+            created_event_details = context.calendar_client.add_event(
+                title=title,
+                start_time=start_time,
+                end_time=end_time,
+                description=description
+                # Potentially add attendees, location etc. if provided in args
+            )
+
+            self.logger.info(f"Event added successfully: {created_event_details}")
+            return self._create_success_result({
+                "message": f"OK. Scheduled '{title}'.",
+                "event_id": created_event_details.get("id"),
+                "event_link": created_event_details.get("htmlLink"),
+                "scheduled_start": start_time.isoformat(),
+                "scheduled_end": end_time.isoformat(),
+            })
+
+        except Exception as e:
+            self.logger.exception(f"Error during fixed-time scheduling for '{title}': {e}")
+            return self._create_error_result(f"An internal error occurred while scheduling the fixed-time event: {e}")
+
+
 
     def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
         self.logger.info(f"Running {self.tool_name} with args: {args}")
@@ -134,50 +201,50 @@ class ScheduleActivityWrapper(ToolWrapper):
             self.logger.debug("Arguments validated successfully.")
         except ValidationError as e:
             self.logger.error(f"Argument validation failed: {e}")
-            # Provide specific feedback if possible
             error_msg = f"Invalid arguments provided for scheduling: {e.errors()}"
-            # Potentially format this into a clarification prompt
             clarification = f"I couldn't understand the details for scheduling. Please clarify: {e.errors()}"
             return self._create_clarification_result(clarification, result_data={"validation_errors": e.errors()})
 
         # 2. Convert simple types to domain types
-        user_tz = pytz.timezone(context.preferences.time_zone)
+        try:
+            user_tz = pytz.timezone(context.preferences.time_zone)
+        except Exception as e:
+             self.logger.error(f"Invalid timezone in user preferences: {context.preferences.time_zone} - {e}")
+             return self._create_error_result(f"Invalid timezone configuration found in your preferences: {context.preferences.time_zone}")
 
         start_time: Optional[datetime] = parse_datetime_flexible(validated_args.start_time_str, user_tz)
         end_time: Optional[datetime] = parse_datetime_flexible(validated_args.end_time_str, user_tz)
         duration: Optional[timedelta] = parse_timedelta_minutes(validated_args.duration_minutes)
         deadline: Optional[datetime] = parse_datetime_flexible(validated_args.deadline_str, user_tz)
         category: Optional[ActivityCategory] = ActivityCategory(validated_args.category_str.upper()) if validated_args.category_str else None
+        description: Optional[str] = validated_args.description # Get description
 
         # --- Logic to determine task parameters ---
-        # Needs refinement based on how flexible scheduling vs fixed time is handled.
+
         # Scenario 1: Fixed start and end time provided
         if start_time and end_time:
             if end_time <= start_time:
                 return self._create_error_result("End time must be after start time.")
-            # Treat as MustDo? Or WantToDo with fixed time? Assume WantToDo for now.
-            estimated_duration = end_time - start_time
-            self.logger.info(f"Scheduling fixed time event: {start_time} to {end_time}")
-             # TODO: Implement logic to check conflict for fixed time slot and add to calendar directly.
-             # This might need a separate function or modification of core logic.
-             # For now, return placeholder success.
-            return self._create_success_result({
-                "message": f"Placeholder: Would schedule fixed event '{validated_args.title}'.",
-                "scheduled_start": start_time.isoformat(),
-                "scheduled_end": end_time.isoformat(),
-            })
+            # --- Call helper for fixed time scheduling ---
+            return self._handle_fixed_time_scheduling(
+                title=validated_args.title,
+                start_time=start_time,
+                end_time=end_time,
+                description=description,
+                context=context
+            )
 
         # Scenario 2: Start time and duration provided
         elif start_time and duration:
-            end_time = start_time + duration
-            estimated_duration = duration
-            self.logger.info(f"Scheduling fixed start event: {start_time}, duration {duration}")
-            # TODO: Implement logic to check conflict for fixed time slot and add to calendar directly.
-            return self._create_success_result({
-                "message": f"Placeholder: Would schedule fixed start event '{validated_args.title}'.",
-                "scheduled_start": start_time.isoformat(),
-                "scheduled_end": end_time.isoformat(),
-            })
+            calculated_end_time = start_time + duration
+            # --- Call helper for fixed time scheduling ---
+            return self._handle_fixed_time_scheduling(
+                title=validated_args.title,
+                start_time=start_time,
+                end_time=calculated_end_time,
+                description=description,
+                context=context
+            )
 
         # Scenario 3: Duration provided, find available slot (Core flexible scheduling)
         elif duration:
@@ -185,34 +252,31 @@ class ScheduleActivityWrapper(ToolWrapper):
             self.logger.info(f"Scheduling flexible task: duration {duration}")
             # This is the main path using our existing scheduler logic
 
-            # Create a WantToDoActivity object
-            # Use default priority/category if not provided? Or error? Assume defaults/error for now.
             if not category:
+                # Ask for category if flexible scheduling is requested without one
                 return self._create_clarification_result("Please specify a category (e.g., WORK, PERSONAL) for this task.")
             priority = validated_args.priority or 5 # Default priority
 
             activity_to_schedule = WantToDoActivity(
-                # id will be generated by model default
                 title=validated_args.title,
+                description=description, # Pass description
                 estimated_duration=estimated_duration,
                 priority=priority,
                 category=category,
                 deadline=deadline,
-                # status is TODO by default
             )
 
             # 3. Call core logic
             try:
                 # 3a. Get available slots (using Task 5 logic via calendar client)
-                # Define query range (e.g., next 7 days from now)
                 query_start = datetime.now(user_tz) # Or context-aware start
                 query_end = query_start + timedelta(days=7) # Configurable range
                 self.logger.info(f"Fetching available slots from {query_start} to {query_end}")
+                # Ensure calendar_client is awaited if its methods are async
                 available_slots = context.calendar_client.get_available_time_slots(
                     preferences=context.preferences,
                     start_time=query_start,
                     end_time=query_end
-                    # calendar_id='primary' # Assuming primary for now
                 )
                 self.logger.info(f"Found {len(available_slots)} available slots matching preferences.")
 
@@ -220,31 +284,44 @@ class ScheduleActivityWrapper(ToolWrapper):
                      return self._create_error_result(f"No available time slots found in the next 7 days matching your preferences.")
 
                 # 3b. Run the basic scheduler (Task 4)
-                # We only schedule this one task for now
                 scheduled_map, unscheduled = schedule_want_to_do_basic(
-                    want_to_do_list=[activity_to_schedule], # List with just the one task
-                    available_slots=available_slots # Pass the filtered slots
+                    want_to_do_list=[activity_to_schedule],
+                    available_slots=available_slots
                 )
 
                 # 4. Format the result
                 if activity_to_schedule.id in scheduled_map:
                     scheduled_slot = scheduled_map[activity_to_schedule.id]
                     self.logger.info(f"Successfully scheduled '{activity_to_schedule.title}' at {scheduled_slot.start_time}")
+
                     # TODO: Persist the scheduled event (e.g., add to Google Calendar via calendar_client, update task status in DB)
+                    # Example conceptual call:
+                    created_event_details = context.calendar_client.add_event(
+                    title=activity_to_schedule.title,
+                         start_time=scheduled_slot.start_time,
+                         end_time=scheduled_slot.end_time,
+                         description=activity_to_schedule.description
+                    )
+                    event_id = created_event_details.get("id")
+                    event_link = created_event_details.get("htmlLink")
+                    # Simulate success for now
+                    event_id = event_id
+                    event_link = event_link
+
                     return self._create_success_result({
                         "message": f"OK. Scheduled '{activity_to_schedule.title}'.",
                         "activity_id": activity_to_schedule.id,
+                        "event_id": event_id, # Add event ID from calendar
+                        "event_link": event_link, # Add link from calendar
                         "scheduled_start": scheduled_slot.start_time.isoformat(),
                         "scheduled_end": scheduled_slot.end_time.isoformat(),
                         "category": activity_to_schedule.category.value,
                     })
                 else:
                     self.logger.warning(f"Could not schedule '{activity_to_schedule.title}' - no suitable slot found.")
-                    # Provide more specific reason if possible from scheduler logic
                     return self._create_error_result(f"Could not find a suitable time slot for '{activity_to_schedule.title}' with duration {activity_to_schedule.estimated_duration}.")
 
             except Exception as e:
-                # Catch potential errors from calendar API or scheduling logic
                 self.logger.exception(f"Core logic execution failed: {e}")
                 return self._create_error_result(f"An internal error occurred while trying to schedule: {e}")
 
@@ -252,6 +329,7 @@ class ScheduleActivityWrapper(ToolWrapper):
         else:
             self.logger.warning("Insufficient information provided for scheduling.")
             return self._create_clarification_result("Please provide at least a duration, or specific start/end times for the activity.")
+
 
 
 # --- Tool Registry (Conceptual) ---

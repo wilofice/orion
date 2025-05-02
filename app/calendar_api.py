@@ -67,6 +67,38 @@ class AbstractCalendarClient(ABC):
         """Gets available (free) time slots for a given calendar and time range."""
         pass
 
+    @abstractmethod
+    def add_event(
+            self,
+            title: str,
+            start_time: datetime,
+            end_time: datetime,
+            description: Optional[str] = None,
+            attendees: Optional[List[str]] = None,
+            location: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Add an event to the calendar.
+
+        Args:
+            title: The event title/summary
+            start_time: Event start datetime (timezone-aware)
+            end_time: Event end datetime (timezone-aware)
+            description: Optional event description/notes
+            attendees: Optional list of attendee email addresses
+            location: Optional location string for the event
+
+        Returns:
+            Dict containing created event details including at least:
+                - id: str (The unique event ID)
+                - htmlLink: str (URL to view the event)
+                - status: str (Event status e.g., 'confirmed')
+
+        Raises:
+            CalendarError: If the event creation fails
+        """
+        pass
+
 
 # --- Google Calendar API Client Implementation ---
 
@@ -454,6 +486,59 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
 
         self.logger.info(f"Calculated {len(filtered_free_slots)} final available slots after applying preferences.")
         return filtered_free_slots
+
+    def add_event(
+            self,
+            title: str,
+            start_time: datetime,
+            end_time: datetime,
+            description: Optional[str] = None,
+            attendees: Optional[List[str]] = None,
+            location: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Add an event to the calendar.
+
+        Args:
+            title: The event title/summary
+            start_time: Event start datetime (timezone-aware)
+            end_time: Event end datetime (timezone-aware)
+            description: Optional event description/notes
+            attendees: Optional list of attendee email addresses
+            location: Optional location string for the event
+
+        Returns:
+            Dict containing created event details including at least:
+                - id: str (The unique event ID)
+                - htmlLink: str (URL to view the event)
+                - status: str (Event status e.g., 'confirmed')
+
+        Raises:
+            CalendarError: If the event creation fails
+        """
+        try:
+            service = self._get_service()
+
+            event = {
+                'summary': title,
+                'description': description,
+                'start': {
+                    'dateTime': f'{startDate}T{startTime}',
+                    #'timeZone': timeZone,
+                },
+                'end': {
+                    'dateTime': f'{endDate}T{endTime}',
+                    #'timeZone': timeZone,
+                },
+                'attendees': [],
+            }
+            created_event = service.events().insert(calendarId='primary', body=event).execute()
+            return created_event
+        except Exception as e:
+            # Log the error or handle it appropriately
+            print(f"An error occurred while creating the event: {e}")
+            return None
+
 
 
 # --- Example Usage ---
