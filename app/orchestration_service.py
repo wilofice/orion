@@ -250,20 +250,28 @@ async def handle_chat_request(
                 # Convert ExecutorToolResult into the ToolResult structure expected by Gemini API history
                 # The 'response' dict should contain the data Gemini needs to formulate its final text response.
                 gemini_tool_result_payload = {
-                     "status": tool_exec_result.status.value,
-                     # Include relevant data based on status
-                 }
-                if tool_exec_result.status == ToolResultStatus.SUCCESS and tool_exec_result.result:
-                    gemini_tool_result_payload.update(tool_exec_result.result)
+                    "status": tool_exec_result.status.value,
+                }
+
+                if tool_exec_result.status == ToolResultStatus.SUCCESS:
+                    if isinstance(tool_exec_result.result, dict):
+                        gemini_tool_result_payload.update(tool_exec_result.result)
+                    else:
+                        logger.warning("Tool result is not a dictionary. Skipping result update.")
+
                 elif tool_exec_result.status == ToolResultStatus.ERROR:
                     gemini_tool_result_payload["error_message"] = tool_exec_result.error_details
-                    if tool_exec_result.result: # Include extra error context if available
-                         gemini_tool_result_payload["details"] = tool_exec_result.result
-                elif tool_exec_result.status == ToolResultStatus.CLARIFICATION_NEEDED:
-                     gemini_tool_result_payload["clarification_needed"] = tool_exec_result.clarification_prompt
-                     if tool_exec_result.result: # Include extra context if available
-                         gemini_tool_result_payload["details"] = tool_exec_result.result
+                    if isinstance(tool_exec_result.result, dict):
+                        gemini_tool_result_payload["details"] = tool_exec_result.result
 
+                elif tool_exec_result.status == ToolResultStatus.CLARIFICATION_NEEDED:
+                    gemini_tool_result_payload["clarification_needed"] = tool_exec_result.clarification_prompt
+                    if isinstance(tool_exec_result.result, dict):
+                        gemini_tool_result_payload["details"] = tool_exec_result.result
+
+                else:
+                    logger.error(f"Unexpected ToolResultStatus: {tool_exec_result.status}")
+                    gemini_tool_result_payload["error_message"] = "Unexpected tool execution status."
 
                 function_response_turn = ConversationTurn.function_turn(
                     ToolResult(
