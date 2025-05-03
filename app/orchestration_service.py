@@ -25,8 +25,8 @@ from session_manager import AbstractSessionManager
 # from .tool_wrappers import TOOL_REGISTRY # Conceptual import
 # From models.py (Task 1)
 from models import UserPreferences
-# From calendar_api.py (Task 2)
-from calendar_api import AbstractCalendarClient
+# From calendar_client.py (Task 2)
+from calendar_client import AbstractCalendarClient
 import threading
 
 

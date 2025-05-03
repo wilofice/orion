@@ -1,4 +1,4 @@
-# app/calendar_api.py
+# app/calendar_client.py
 
 import logging
 from abc import ABC, abstractmethod

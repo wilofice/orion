@@ -1,9 +1,7 @@
 # Example Usage section from app/scheduler_logic.py
-from app.scheduler import filter_slots_by_preferences
+from app.scheduler_logic import filter_slots_by_preferences
 
 # --- Example Usage ---
-if __name__ == '__main__':
-    run_slot_filtering_demo()
 
 def run_slot_filtering_demo():
     import logging
@@ -141,3 +139,6 @@ def run_slot_filtering_demo():
     else:
         print("No slots available after filtering.")
     print("--- End Final Available Slots ---")
+
+if __name__ == '__main__':
+    run_slot_filtering_demo()

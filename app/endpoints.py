@@ -15,7 +15,7 @@ from orchestration_service import handle_chat_request
 from session_manager import AbstractSessionManager, MongoSessionManager
 from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
-from calendar_api import AbstractCalendarClient, GoogleCalendarAPIClient
+from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
 from models import ChatRequest, ChatResponse, ErrorDetail, ResponseStatus
 # --- Configuration ---
 # In a real app, use environment variables or a config file

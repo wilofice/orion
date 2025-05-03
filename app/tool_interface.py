@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field, ConfigDict
 try:
     # Assuming models.py is accessible
     from models import UserPreferences, DayOfWeek
-    # Assuming calendar_api.py defines the abstract client interface
-    from calendar_api import AbstractCalendarClient
+    # Assuming calendar_client.py defines the abstract client interface
+    from calendar_client import AbstractCalendarClient
     # Assuming gemini_interface.py defines FunctionCall
     from gemini_interface import FunctionCall
 except ImportError:

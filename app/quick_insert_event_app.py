@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends
 from .models import Event
-from .calendar_api import create_event, schedule_event
+from .quick_init_calendar_service import create_event, schedule_event
 from .database import insert_document
 from bson import ObjectId
 

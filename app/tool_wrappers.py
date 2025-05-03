@@ -18,7 +18,7 @@ try:
     # Core logic functions (conceptual imports)
     from scheduler_logic import schedule_want_to_do_basic, ConflictInfo # Need ConflictInfo if handling conflicts here
     # Calendar client interface (needed from context)
-    from calendar_api import AbstractCalendarClient, GoogleCalendarAPIClient
+    from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
 except ImportError as e:
     # Fallback for running script directly or if structure differs
     print("Warning: Could not import dependent modules. Using dummy classes/functions.")
