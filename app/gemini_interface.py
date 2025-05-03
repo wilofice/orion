@@ -20,7 +20,7 @@ class ConversationRole(str, Enum):
     USER = "user"
     MODEL = "model"
     # Represents the result of a function call requested by the model
-    FUNCTION = "function" # Changed from TOOL to match Gemini API v1beta terminology
+    FUNCTION = "function" # Changed from TOOL to match Gemini API
 
 class ToolResultStatus(str, Enum):
     """Indicates the outcome of a tool execution."""
