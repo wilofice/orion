@@ -29,7 +29,6 @@ class ToolResultStatus(str, Enum):
     CLARIFICATION_NEEDED = "clarification_needed"
 
 
-# --- Data Structures ---
 
 class FunctionCall(BaseModel):
     """Represents a function call requested by the Gemini model."""
