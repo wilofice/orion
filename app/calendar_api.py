@@ -207,7 +207,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
     # --- Service Account Authentication (Alternative) ---
     # def authenticate_service_account(self, service_account_file: str = SERVICE_ACCOUNT_FILE, scopes: List[str] = SCOPES) -> None:
     #     """Authenticates using a service account key file."""
-    #     from google.oauth2 import service_account
+    #     from Google.oauth2 import service_account
     #     self.logger.info("Attempting Google Calendar authentication via Service Account...")
     #     try:
     #         creds = service_account.Credentials.from_service_account_file(
@@ -523,12 +523,10 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
                 'summary': title,
                 'description': description,
                 'start': {
-                    'dateTime': f'{startDate}T{startTime}',
-                    #'timeZone': timeZone,
+                    'dateTime': start_time.isoformat(),
                 },
                 'end': {
-                    'dateTime': f'{endDate}T{endTime}',
-                    #'timeZone': timeZone,
+                    'dateTime': end_time.isoformat(),
                 },
                 'attendees': [],
             }

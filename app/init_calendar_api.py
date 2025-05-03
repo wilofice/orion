@@ -11,17 +11,17 @@ def get_calendar_service():
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first time.
     if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        creds = Credentials.from_authorized_user_file('../token.json', SCOPES)
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
+                '../credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
-        with open('token.json', 'w') as token:
+        with open('../token.json', 'w') as token:
             token.write(creds.to_json())
     service = build('calendar', 'v3', credentials=creds)
     return service
@@ -59,3 +59,18 @@ def schedule_event(startDate, startTime, endDate, endTime, topic, description, t
 
     response = create_event(event)
     return response
+
+if __name__ == "__main__":
+    # Example usage
+
+    get_calendar_service()
+    # startDate = '2023-10-01'
+    # startTime = '10:00:00'
+    # endDate = '2023-10-01'
+    # endTime = '11:00:00'
+    # topic = 'Test Event'
+    # description = 'This is a test event.'
+    # timeZone = 'America/New_York'
+    #
+    # event_response = schedule_event(startDate, startTime, endDate, endTime, topic, description, timeZone)
+    # print(event_response)

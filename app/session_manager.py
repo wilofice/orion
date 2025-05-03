@@ -147,7 +147,21 @@ class MongoSessionManager(AbstractSessionManager):
                  ConversationTurn(role=ConversationRole.USER, parts=["Hello"], timestamp=datetime.now(timezone.utc)-timedelta(minutes=5)),
                  ConversationTurn(role=ConversationRole.MODEL, parts=["Hi there!"], timestamp=datetime.now(timezone.utc)-timedelta(minutes=4)),
              ]
-        return [] # Return empty list if not found
+        return [
+            ConversationTurn(role=ConversationRole.USER,
+                             parts=[''' 
+                                You are an advanced language model responsible for scheduling activities based on user preferences and calendar availability. When a user provides a prompt, you should intelligently infer and guess any missing parameters from the context provided by the user. Do not enforce the requirement for the user to specify every precise parameter. Instead, use your understanding to fill in the gaps and ensure the function call is complete and valid.
+                                Your task is to create a calendar event based on the user's request. You will receive a function call with parameters such as event name, start time, end time, and any other relevant details. If the user does not specify all required parameters, you should infer and guess the missing values based on the context provided.
+Instructions:
+
+Infer Missing Parameters: If the user does not specify all required parameters, use the context provided to infer and guess the missing values.
+Contextual Understanding: Leverage your understanding of natural language to fill in gaps and ensure the function call is complete.
+Human-Centric Approach: Remember that users may not always provide precise details. Your role is to assist by making intelligent guesses to complete the scheduling task. For now, never ask the user for more clarification.
+Response with Event Details: In the next turn, when the tool is executed successfully with the parameters you have provided, the created event details will be passed back to you by the program. Respond to the user in general language, including the event details and a link where the user can check the created event.
+Suggest Next Activities: Make suggestions about possible next activities the user may want to pursue based on the context and the scheduled event.
+                             '''],
+                             timestamp=datetime.now(timezone.utc)-timedelta(minutes=3)),
+        ] # Return empty list if not found
 
     async def append_turn(self, session_id: str, turn: ConversationTurn):
         """

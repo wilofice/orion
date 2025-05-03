@@ -52,8 +52,11 @@ def get_calendar_client() -> AbstractCalendarClient:
     logger.warning("Using dummy GoogleCalendarAPIClient instance")
     # Needs credential configuration
     try:
+        client_secret_path = "../credentials.json"  # Path to your client secret file
+        token_path = "../token.json"  # Path to your token file
+        scopes = ['https://www.googleapis.com/auth/calendar']  # Define your scopes
         # Attempt to create, might need error handling if creds missing
-        return GoogleCalendarAPIClient()
+        return GoogleCalendarAPIClient(client_secret_path, token_path, scopes)
     except Exception as e:
         logger.error(f"Failed to instantiate GoogleCalendarAPIClient: {e}")
         # Raise an exception that FastAPI can handle, e.g., 503 Service Unavailable
@@ -229,7 +232,4 @@ async def create_user(request: CreateUserRequest):
             detail=f"An error occurred while creating the user: {str(e)}"
         )
 
-# --- Example of how to run (if this is main.py) ---
-# Use uvicorn: pip install uvicorn
-# Command: uvicorn main:app --reload
 

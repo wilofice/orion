@@ -14,11 +14,11 @@ try:
     # Interfaces from Task 5
     from tool_interface import ExecutionContext, ExecutorToolResult, ToolResultStatus
     # Core models from Task 1
-    from models import WantToDoActivity, TimeSlot, ActivityCategory, UserPreferences, DayOfWeek
+    from models import WantToDoActivity, TimeSlot, ActivityCategory, UserPreferences, DayOfWeek, EnergyLevel
     # Core logic functions (conceptual imports)
     from scheduler_logic import schedule_want_to_do_basic, ConflictInfo # Need ConflictInfo if handling conflicts here
     # Calendar client interface (needed from context)
-    from calendar_api import AbstractCalendarClient
+    from calendar_api import AbstractCalendarClient, GoogleCalendarAPIClient
 except ImportError as e:
     # Fallback for running script directly or if structure differs
     print("Warning: Could not import dependent modules. Using dummy classes/functions.")
@@ -31,6 +31,11 @@ class ToolWrapper(ABC):
     Defines the interface for the Tool Executor to interact with specific tool logic.
     """
     tool_name: str # Subclasses should define the tool name they handle
+    description: str = Field(..., description="Description of the tool.")
+    parameters_schema: Dict[str, Any] = Field(
+        ...,
+        description="Schema defining the parameters for the tool."
+    )
 
     @abstractmethod
     def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
@@ -82,7 +87,10 @@ def parse_datetime_flexible(dt_str: str, user_tz: pytz.BaseTzInfo) -> Optional[d
         # If parsing yields only a date, assume start of day? Or require time?
         # For now, assume parser gets time if specified.
         # Make the parsed datetime timezone-aware using user's timezone
-        dt_aware = user_tz.localize(dt_naive, is_dst=None) # is_dst=None handles ambiguity
+        if dt_naive.tzinfo is None:
+            dt_aware = user_tz.localize(dt_naive, is_dst=None)  # Make it timezone-aware
+        else:
+            dt_aware = dt_naive.astimezone(user_tz)  # Convert to the user's timezone # is_dst=None handles ambiguity
         return dt_aware
     except (ValueError, OverflowError, TypeError) as e:
         logging.getLogger(__name__).warning(f"Could not parse datetime string '{dt_str}': {e}")
@@ -102,6 +110,7 @@ def parse_timedelta_minutes(minutes: Optional[int]) -> Optional[timedelta]:
 class ScheduleActivityWrapperArgs(BaseModel):
     """Input validation model for schedule_activity arguments."""
     title: str = Field(..., description="The title of the task or event.")
+    description: str = Field(..., description="The description of the task or event.")
     start_time_str: Optional[str] = Field(None, description="Requested start time (e.g., 'tomorrow 9am', '2025-05-10 14:00').")
     end_time_str: Optional[str] = Field(None, description="Requested end time.")
     duration_minutes: Optional[int] = Field(None, gt=0, description="Requested duration in minutes (alternative to end_time).")
@@ -124,6 +133,48 @@ class ScheduleActivityWrapper(ToolWrapper):
     """
     tool_name = "schedule_activity"
     logger = logging.getLogger(__name__)
+    description = "Schedules an activity based on user preferences and calendar availability."
+    parameters_schema = {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The title of the task or event or meeting or activity."
+        },
+        "description": {
+          "type": "string",
+          "description": "A very short description of the task or event or meeting or activity."
+        },
+        "start_time_str": {
+          "type": "string",
+          "description": "Requested start time in a timezone-aware format (e.g., '2025-05-10T14:00:00+02:00'). Must include full date, time, and timezone offset."
+        },
+        "end_time_str": {
+          "type": "string",
+          "description": "Requested end time in a timezone-aware format (e.g., '2025-05-10T15:00:00+02:00'). Must include full date, time, and timezone offset."
+        },
+        "duration_minutes": {
+          "type": "integer",
+          "description": "Requested duration in minutes (alternative to end_time).",
+          "minimum": 1
+        },
+        "category_str": {
+          "type": "string",
+          "description": "Category hint (e.g., 'WORK', 'PERSONAL', 'LEARNING', 'EXERCISE', 'SOCIAL', 'CHORE', 'ERRAND', 'FUN', 'OTHER')."
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Priority hint (1-10).",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "deadline_str": {
+          "type": "string",
+          "description": "Optional deadline string."
+        }
+      },
+      "required": ["title", "start_time_str", "end_time_str", "duration_minutes", "category_str"],
+    }
     def _handle_fixed_time_scheduling(
         self,
         title: str,
@@ -274,6 +325,7 @@ class ScheduleActivityWrapper(ToolWrapper):
                 self.logger.info(f"Fetching available slots from {query_start} to {query_end}")
                 # Ensure calendar_client is awaited if its methods are async
                 available_slots = context.calendar_client.get_available_time_slots(
+                    calendar_id='primary', # Assuming primary for now
                     preferences=context.preferences,
                     start_time=query_start,
                     end_time=query_end
@@ -297,7 +349,7 @@ class ScheduleActivityWrapper(ToolWrapper):
                     # TODO: Persist the scheduled event (e.g., add to Google Calendar via calendar_client, update task status in DB)
                     # Example conceptual call:
                     created_event_details = context.calendar_client.add_event(
-                    title=activity_to_schedule.title,
+                         title=activity_to_schedule.title,
                          start_time=scheduled_slot.start_time,
                          end_time=scheduled_slot.end_time,
                          description=activity_to_schedule.description
@@ -345,10 +397,37 @@ if __name__ == '__main__':
 
     # Dummy context objects for example
     class DummyPrefs(UserPreferences):
-        user_id: str = "user_123"
-        time_zone: str = "Europe/Paris" # Must be valid pytz timezone
-        working_hours: Dict[DayOfWeek, Tuple[time, time]] = {}# Add dummy hours if needed
-        days_off: List[date] = []
+        user_id: str = Field(..., description="User ID")
+        time_zone: str = Field(default="Europe/Paris", description="Time zone")
+        working_hours: Dict[DayOfWeek, tuple] = Field(
+            default={
+                DayOfWeek.MONDAY: (time(9, 0), time(17, 0)),
+                DayOfWeek.TUESDAY: (time(9, 0), time(17, 0)),
+                DayOfWeek.WEDNESDAY: (time(9, 0), time(17, 0)),
+                DayOfWeek.THURSDAY: (time(9, 0), time(17, 0)),
+                DayOfWeek.FRIDAY: (time(9, 0), time(16, 0)),
+            },
+            description="Working hours for each day"
+        )
+        days_off: List[date] = Field(default=[date(2025, 1, 1)], description="Days off")
+        preferred_break_duration: timedelta = Field(
+            default=timedelta(minutes=5), description="Preferred break duration"
+        )
+        work_block_max_duration: timedelta = Field(
+            default=timedelta(hours=2), description="Maximum work block duration"
+        )
+        energy_levels: Dict[tuple, EnergyLevel] = Field(
+            default={
+                (time(9, 0), time(12, 0)): EnergyLevel.HIGH,
+                (time(13, 0), time(17, 0)): EnergyLevel.MEDIUM,
+            },
+            description="Energy levels throughout the day"
+        )
+        rest_preferences: Dict[str, tuple] = Field(
+            default={"sleep_schedule": (time(23, 59), time(5, 0))},
+            description="Rest preferences"
+        )
+
     class DummyClient(AbstractCalendarClient):
         def authenticate(self): pass
         def get_busy_slots(self, *args, **kwargs): return []
@@ -365,40 +444,48 @@ if __name__ == '__main__':
                  TimeSlot(start_time=now+timedelta(hours=5), end_time=now+timedelta(hours=8)),
              ]
 
+
+    client_secret_path = "../credentials.json"  # Path to your client secret file
+    token_path = "../token.json"  # Path to your token file
+    scopes = ['https://www.googleapis.com/auth/calendar']  # Define your scopes
+    # Attempt to create, might need error handling if creds missing
+    client = GoogleCalendarAPIClient(client_secret_path, token_path, scopes)
+
     exec_context = ExecutionContext(
         user_id="user_123",
-        preferences=DummyPrefs(),
-        calendar_client=DummyClient()
+        preferences=DummyPrefs(user_id="user_123"),
+        calendar_client=client
     )
 
-    # --- Test Cases ---
+    # # --- Test Cases ---
     print("\n--- Test Case 1: Flexible Scheduling (Duration) ---")
-    args1 = {"title": "Write report", "duration_minutes": 90, "category_str": "WORK", "priority": 8}
+    args1 = {"title": "Write report", "duration_minutes": 90, "category_str": "WORK", "priority": 8, 'description': "Complete the quarterly report."}
     wrapper1 = ScheduleActivityWrapper()
     result1 = wrapper1.run(args1, exec_context)
     print(result1.model_dump_json(indent=2))
 
-    print("\n--- Test Case 2: Fixed Time ---")
-    args2 = {"title": "Fixed Meeting", "start_time_str": "tomorrow 10am", "end_time_str": "tomorrow 11am"}
-    wrapper2 = ScheduleActivityWrapper()
-    result2 = wrapper2.run(args2, exec_context)
-    print(result2.model_dump_json(indent=2))
+    # print("\n--- Test Case 2: Fixed Time ---")
+    # args2 = {"title": "Fixed Meeting", "start_time_str": "2025-05-02T14:00:00+02:00", "end_time_str": "2025-05-02T15:00:00+02:00"
+    #          , "description": "Discuss project updates", "category_str": "WORK"}
+    # wrapper2 = ScheduleActivityWrapper()
+    # result2 = wrapper2.run(args2, exec_context)
+    # print(result2.model_dump_json(indent=2))
 
-    print("\n--- Test Case 3: Insufficient Info ---")
-    args3 = {"title": "Vague Task"}
-    wrapper3 = ScheduleActivityWrapper()
-    result3 = wrapper3.run(args3, exec_context)
-    print(result3.model_dump_json(indent=2))
-
-    print("\n--- Test Case 4: Validation Error (Bad Category) ---")
-    args4 = {"title": "My Hobby", "duration_minutes": 60, "category_str": "FUN"}
-    wrapper4 = ScheduleActivityWrapper()
-    result4 = wrapper4.run(args4, exec_context)
-    print(result4.model_dump_json(indent=2))
-
-    print("\n--- Test Case 5: Validation Error (No Title) ---")
-    args5 = {"duration_minutes": 60, "category_str": "WORK"}
-    wrapper5 = ScheduleActivityWrapper()
-    result5 = wrapper5.run(args5, exec_context)
-    print(result5.model_dump_json(indent=2))
+    # print("\n--- Test Case 3: Insufficient Info ---")
+    # args3 = {"title": "Vague Task"}
+    # wrapper3 = ScheduleActivityWrapper()
+    # result3 = wrapper3.run(args3, exec_context)
+    # print(result3.model_dump_json(indent=2))
+    #
+    # print("\n--- Test Case 4: Validation Error (Bad Category) ---")
+    # args4 = {"title": "My Hobby", "duration_minutes": 60, "category_str": "FUN"}
+    # wrapper4 = ScheduleActivityWrapper()
+    # result4 = wrapper4.run(args4, exec_context)
+    # print(result4.model_dump_json(indent=2))
+    #
+    # print("\n--- Test Case 5: Validation Error (No Title) ---")
+    # args5 = {"duration_minutes": 60, "category_str": "WORK"}
+    # wrapper5 = ScheduleActivityWrapper()
+    # result5 = wrapper5.run(args5, exec_context)
+    # print(result5.model_dump_json(indent=2))
 

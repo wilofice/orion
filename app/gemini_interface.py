@@ -70,19 +70,19 @@ class ConversationTurn(BaseModel):
     # Helper validator/constructor for convenience (optional)
     @classmethod
     def user_turn(cls, text: str) -> 'ConversationTurn':
-        return cls(role=ConversationRole.USER, parts=[text])
+        return cls(role=ConversationRole.USER, parts=[f"USER: {text}"])
 
     @classmethod
     def model_turn_text(cls, text: str) -> 'ConversationTurn':
-        return cls(role=ConversationRole.MODEL, parts=[text])
+        return cls(role=ConversationRole.MODEL, parts=[f"AI: {text}"])
 
     @classmethod
     def model_turn_function_call(cls, function_call: FunctionCall) -> 'ConversationTurn':
-        return cls(role=ConversationRole.MODEL, parts=[function_call])
+        return cls(role=ConversationRole.MODEL, parts=[f"AI FUNCTION CALL: {function_call.model_dump_json()}"])
 
     @classmethod
     def function_turn(cls, tool_result: ToolResult) -> 'ConversationTurn':
-        return cls(role=ConversationRole.FUNCTION, parts=[tool_result])
+        return cls(role=ConversationRole.FUNCTION, parts=[f"FUNCTION RESULT: {tool_result.model_dump_json()}"])
 
 
 # Placeholder for ToolDefinition - should match Gemini API's FunctionDeclaration

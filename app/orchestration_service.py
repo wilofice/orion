@@ -2,12 +2,17 @@
 
 import logging
 import uuid
+from datetime import time, timedelta, date
 from typing import List, Dict, Any, Optional
-
+from google import genai
+from google.genai import types
+import json
+from pydantic import BaseModel, Field
 # --- Interface Imports ---
 # Assuming interfaces and models from previous tasks are defined and importable
     # From Task ORCH-3 / main.py
-from endpoints import ChatRequest, ChatResponse, ResponseStatus, ErrorDetail # Or wherever these are defined
+from models import ChatRequest, ChatResponse, ResponseStatus, ErrorDetail, DayOfWeek, \
+    EnergyLevel  # Or wherever these are defined
 # From Task ORCH-4 / gemini_interface.py
 from gemini_interface import (GeminiRequest, GeminiResponse, ConversationTurn,
                                ToolDefinition, ResponseType, FunctionCall, ToolResult,
@@ -22,6 +27,36 @@ from session_manager import AbstractSessionManager
 from models import UserPreferences
 # From calendar_api.py (Task 2)
 from calendar_api import AbstractCalendarClient
+import threading
+
+
+class GenAIClientSingleton:
+    _instance = None
+    _lock = threading.Lock()  # Ensures thread safety
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:  # Double-checked locking
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialize(*args, **kwargs)
+        return cls._instance
+
+    def _initialize(self, *args, **kwargs):
+        # Initialize the GenAI client here
+        self.client = self._create_genai_client(*args, **kwargs)
+
+    def _create_genai_client(self, *args, **kwargs):
+        # Replace with actual GenAI client initialization logic
+        with open('../config.json') as config_file:
+            config = json.load(config_file)
+            api_key = config['api_key']
+        client = genai.Client(api_key=api_key)
+        return client
+
+    @staticmethod
+    def get_instance(*args, **kwargs):
+        return GenAIClientSingleton(*args, **kwargs).client
 
 # --- Placeholder Interfaces/Implementations ---
 # Define dummy classes if real ones aren't available yet
@@ -30,30 +65,28 @@ class AbstractGeminiClient:
         logger.info("Sending request to Gemini API...")
 
         # Prepare the tools for the request
-        tools = [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters,
-            }
-            for tool in request.tools
-        ]
+        # tools = [
+        #     {
+        #         "name": tool.name,
+        #         "description": tool.description,
+        #         "parameters": tool.parameters,
+        #     }
+        #     for tool in request.tools
+        # ]
 
         # Configure the request payload
+
+        tools = types.Tool(function_declarations=request.tools)
+        config = types.GenerateContentConfig(tools=[tools])
         payload = {
             "model": "gemini-2.0-flash",
-            "contents": [turn.parts[0] for turn in request.history if turn.role == ConversationRole.USER],
-            "config": {
-                "tools": tools,
-            },
+            "contents": [turn.parts[0] for turn in request.history],
+            "config": config,
         }
 
         try:
             # Call the Gemini API
-            with open('config.json') as config_file:
-                config = json.load(config_file)
-                api_key = config['api_key']
-            client = genai.Client(api_key=api_key)  # Replace with actual API key
+            client = GenAIClientSingleton.get_instance()  # Replace with actual API key
             response = client.models.generate_content(**payload)
 
             # Parse the response
@@ -89,7 +122,7 @@ class AbstractGeminiClient:
             )
 
 class AbstractToolExecutor:
-    async def execute_tool(call: FunctionCall, context: ExecutionContext) -> ExecutorToolResult:
+    def execute_tool(self, call: FunctionCall, context: ExecutionContext) -> ExecutorToolResult:
         """
         Executes the requested function call using the provided context.
 
@@ -115,7 +148,7 @@ class AbstractToolExecutor:
 
         try:
             # Step 3: Call the wrapper function with call.args and context
-            return await tool_wrapper.execute(call.args, context)
+            return tool_wrapper.run(call.args, context)
         except Exception as e:
             logger.exception(f"Error while executing tool '{call.name}': {e}")
             return ExecutorToolResult(
@@ -124,18 +157,44 @@ class AbstractToolExecutor:
                 error_details=f"An error occurred while executing tool '{call.name}': {str(e)}"
             )
 
+class DummyPrefs(UserPreferences):
+    user_id: str = Field(..., description="User ID")
+    time_zone: str = Field(default="Europe/Paris", description="Time zone")
+    working_hours: Dict[DayOfWeek, tuple] = Field(
+        default={
+            DayOfWeek.MONDAY: (time(9, 0), time(17, 0)),
+            DayOfWeek.TUESDAY: (time(9, 0), time(17, 0)),
+            DayOfWeek.WEDNESDAY: (time(9, 0), time(17, 0)),
+            DayOfWeek.THURSDAY: (time(9, 0), time(17, 0)),
+            DayOfWeek.FRIDAY: (time(9, 0), time(16, 0)),
+        },
+        description="Working hours for each day"
+    )
+    days_off: List[date] = Field(default=[date(2025, 1, 1)], description="Days off")
+    preferred_break_duration: timedelta = Field(
+        default=timedelta(minutes=5), description="Preferred break duration"
+    )
+    work_block_max_duration: timedelta = Field(
+        default=timedelta(hours=2), description="Maximum work block duration"
+    )
+    energy_levels: Dict[tuple, EnergyLevel] = Field(
+        default={
+            (time(9, 0), time(12, 0)): EnergyLevel.HIGH,
+            (time(13, 0), time(17, 0)): EnergyLevel.MEDIUM,
+        },
+        description="Energy levels throughout the day"
+    )
+    rest_preferences: Dict[str, tuple] = Field(
+        default={"sleep_schedule": (time(23, 59), time(5, 0))},
+        description="Rest preferences"
+    )
+
 # Dummy function to get preferences (replace with real implementation)
 async def get_user_preferences(user_id: str) -> UserPreferences:
     logger.warning(f"Using DUMMY UserPreferences for user {user_id}")
     # Need a minimal UserPreferences object that passes validation if used
-    class DummyPrefs(UserPreferences):
-        def __init__(self, user_id: str):
-            self.user_id = user_id
-            self.time_zone = "UTC"  # Must be valid
-            self.working_hours = {}  # Must be dict
-            self.days_off = []
 
-    return DummyPrefs(user_id)
+    return DummyPrefs(user_id=user_id)
 
 # Tool Registry
 from tool_wrappers import TOOL_REGISTRY
@@ -240,7 +299,7 @@ async def handle_chat_request(
                     preferences=preferences,
                     calendar_client=calendar_client
                 )
-                tool_exec_result: ExecutorToolResult = await tool_executor.execute_tool(
+                tool_exec_result: ExecutorToolResult = tool_executor.execute_tool(
                     call=gemini_response.function_call,
                     context=exec_context
                 )
