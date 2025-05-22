@@ -19,7 +19,7 @@ from models import UserPreferences
 
 # --- Configuration ---
 # TODO: Move configuration details (like scopes, paths) to a config file/env vars
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'] # Start with read-only
+SCOPES = ['https://www.googleapis.com/auth/calendar'] # Start with read-only
 # TODO: Replace with the actual path to your downloaded client_secret.json
 CLIENT_SECRET_FILE = 'credentials/client_secret.json'
 # TODO: Define path for storing user tokens after authorization

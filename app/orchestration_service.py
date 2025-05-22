@@ -1,5 +1,3 @@
-# app/orchestration_service.py
-
 import logging
 import uuid
 from datetime import time, timedelta, date
@@ -48,7 +46,7 @@ class GenAIClientSingleton:
 
     def _create_genai_client(self, *args, **kwargs):
         # Replace with actual GenAI client initialization logic
-        with open('../config.json') as config_file:
+        with open('config.json') as config_file:
             config = json.load(config_file)
             api_key = config['api_key']
         client = genai.Client(api_key=api_key)

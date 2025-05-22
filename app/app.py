@@ -1,5 +1,3 @@
-# main.py (Orchestration Service API)
-
 import uuid
 import logging
 from enum import Enum
@@ -8,7 +6,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, Depends, HTTPException, status as http_status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
-
+from fastapi.middleware.cors import CORSMiddleware
 
 from orchestration_service import handle_chat_request
 # --- Import Abstract Interfaces for Dependency Injection ---
@@ -17,6 +15,7 @@ from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
 from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
 from models import ChatRequest, ChatResponse, ErrorDetail, ResponseStatus
+from mangum import Mangum
 # --- Configuration ---
 # In a real app, use environment variables or a config file
 API_VERSION = "v1"
@@ -52,11 +51,9 @@ def get_calendar_client() -> AbstractCalendarClient:
     logger.warning("Using dummy GoogleCalendarAPIClient instance")
     # Needs credential configuration
     try:
-        client_secret_path = "../credentials.json"  # Path to your client secret file
-        token_path = "../token.json"  # Path to your token file
         scopes = ['https://www.googleapis.com/auth/calendar']  # Define your scopes
         # Attempt to create, might need error handling if creds missing
-        return GoogleCalendarAPIClient(client_secret_path, token_path, scopes)
+        return GoogleCalendarAPIClient()
     except Exception as e:
         logger.error(f"Failed to instantiate GoogleCalendarAPIClient: {e}")
         # Raise an exception that FastAPI can handle, e.g., 503 Service Unavailable
@@ -110,12 +107,23 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(beare
     return dummy_user_id_from_token # Return a dummy ID based on token
 
 
+
+
 # --- FastAPI Application ---
 app = FastAPI(
     title="Orion Orchestration Service",
     description="API service to handle user chat prompts and orchestrate LLM calls and tool execution.",
     version="0.1.0",
+    root_path="/Prod"
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # --- API Endpoint (Task 3.1) ---
 # --- API Endpoint (Improved with Dependency Injection) ---
@@ -233,3 +241,5 @@ async def create_user(request: CreateUserRequest):
         )
 
 
+
+lambda_handler = Mangum(app, lifespan="off")
