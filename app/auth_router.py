@@ -1,0 +1,266 @@
+import httpx # Added for making HTTP requests
+from fastapi import Depends, HTTPException, status, Body
+from pydantic import BaseModel, AnyUrl  # HttpUrl removed, AnyUrl could be an alternative
+from typing import Annotated, Dict, Any
+import uuid
+
+from dynamodb import save_user_tokens, get_decrypted_user_tokens, delete_user_tokens, \
+    refresh_google_access_token, encrypt_token, decrypt_token
+from settings_v1 import settings
+# Imports for encryption
+# --- Configuration ---
+
+# Imports for DynamoDB
+import time # For timestamps
+
+
+from fastapi import APIRouter, HTTPException, status
+
+# Initialize an APIRouter instance for user-related routes
+# The 'prefix' adds '/users' before all paths defined in this router.
+# 'tags' helps organize documentation in Swagger UI.
+router = APIRouter(
+    prefix="/auth",
+    tags=["Authentication"],
+)
+
+
+# --- Encryption Utilities ---
+# AES-256 GCM uses a 12-byte (96-bit) IV by convention.
+AES_GCM_IV_LENGTH_BYTES = 12
+
+
+# --- Placeholder User Authentication ---
+# This is a very basic placeholder. In a real application,
+# you would integrate a proper authentication system (e.g., OAuth2 with JWTs for your app).
+
+# Dummy user model (replace with your actual user model from DynamoDB later)
+class User:
+    def __init__(self, id: str, username: str):
+        self.id = id
+        self.username = username
+
+
+# Dummy current_user dependency (replace with actual auth logic)
+async def get_current_user_placeholder() -> User:
+    """
+    Placeholder for current user dependency.
+    In a real app, this would validate a token and fetch user details.
+    For now, it returns a dummy user.
+    """
+    # In a real scenario, you'd decode a JWT, validate it,
+    # and fetch the user from your database (DynamoDB).
+    # If validation fails, raise HTTPException(status_code=401_UNAUTHORIZED, detail="Not authenticated")
+    print("WARNING: Using placeholder authentication. Replace with actual implementation.")
+    return User(id="dummy_user_id_123", username="testuser")
+
+
+
+class GoogleAuthCodePayload(BaseModel):
+    """
+    Request body for sending Google authorization code to the backend.
+    """
+    authorization_code: str
+    platform: str
+    code_verifier: str
+    # Using HttpUrl for basic validation that it's a URL.
+    # Further validation (e.g., matching against pre-registered URIs) can be added.
+    redirect_uri: AnyUrl # Ensures it's a valid URL format
+
+    # Example for stricter validation if needed:
+    # @validator('authorization_code')
+    # def code_must_not_be_empty(cls, v):
+    #     if not v.strip():
+    #         raise ValueError('authorization_code must not be empty')
+    #     return v
+
+
+# --- API Routers ---
+# We'll define routers for different parts of the API.
+# For now, we'll create stubs for the Google OAuth related endpoints.
+
+
+CurrentUser = Annotated[User, Depends(get_current_user_placeholder)]
+
+@router.post("/google/connect", tags=["Authentication"])
+async def connect_google_calendar(
+        payload: GoogleAuthCodePayload = Body(...),
+        current_user: User = Depends(get_current_user_placeholder)
+):
+    """
+    Receives the Google authorization code from the mobile app,
+    and exchanges it with Google for access and refresh tokens.
+    """
+    #print(f"Received Google auth code for user: {current_user.id}")
+    print(f"  Redirect URI from payload: {payload.redirect_uri}")
+    print(f"  Redirect URI from payload: {payload.authorization_code}")
+    print(f"  Redirect URI from payload: {payload.code_verifier}")
+
+    if payload.platform not in ["ios", "android"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Invalid platform. Must be 'ios' or 'android'.")
+    if payload.platform == "ios":
+        client_id = settings.GOOGLE_CLIENT_ID_IOS
+    elif payload.platform == "android":
+        client_id = settings.GOOGLE_CLIENT_ID_ANDROID
+
+    token_request_data_ = {
+        "code": payload.authorization_code,
+        "client_id": client_id,
+        "redirect_uri": payload.redirect_uri,  # Use the URI received from the client
+        "grant_type": "authorization_code", # This should be correct
+        "code_verifier": payload.code_verifier,
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            print(f"Requesting tokens from Google: {settings.GOOGLE_TOKEN_URL}")
+            response = await client.post("https://oauth2.googleapis.com/token", data=token_request_data_, headers={"Content-Type": "application/x-www-form-urlencoded"})
+            response.raise_for_status()  # Raises an HTTPStatusError for 4xx/5xx responses
+
+            google_tokens: Dict[str, Any] = response.json()
+            print("Successfully fetched tokens from Google.")
+
+            # IMPORTANT: Do NOT log full tokens in production.
+            # This is for development/debugging purposes for this task.
+            # In subsequent tasks, these will be encrypted and stored.
+            print(f"  Access Token (type): {type(google_tokens.get('access_token'))}")
+            print(f"  Refresh Token (type): {type(google_tokens.get('refresh_token'))}")  # May not always be present
+            print(f"  ID Token (type): {type(google_tokens.get('id_token'))}")  # If openid scope was requested
+            print(f"  Expires In (seconds): {google_tokens.get('expires_in')}")
+            print(f"  Scopes: {google_tokens.get('scope')}")
+
+            # STUB: Token Encryption & Storage (To be implemented in Tasks 2.2, 2.3, 2.4)
+            # 1. Validate id_token (if present) to get google_user_id.
+            # 2. Encrypt access_token and refresh_token.
+            # 3. Store encrypted tokens, expiry, scopes, google_user_id in DynamoDB, linked to current_user.id.
+
+            # Example usage of encryption (actual storage in Task 2.3/2.4)
+            if "access_token" in google_tokens:
+                access_token = google_tokens["access_token"]
+                try:
+                    iv_access, ct_access, tag_access = encrypt_token(access_token, settings.ENCRYPTION_KEY_BYTES)
+                    print(
+                        f"Access Token encrypted. IV length: {len(iv_access)}, CT length: {len(ct_access)}, Tag length: {len(tag_access)}")
+
+                    # Example decryption (for testing the utils)
+                    decrypted_access_token = decrypt_token(iv_access, ct_access, tag_access,
+                                                           settings.ENCRYPTION_KEY_BYTES)
+                    if decrypted_access_token == access_token:
+                        print("Access Token decryption successful (test).")
+                    else:
+                        print("ERROR: Access Token decryption test FAILED.")
+                except Exception as e:
+                    print(f"ERROR during access token encryption/decryption test: {e}")
+
+            if "refresh_token" in google_tokens:
+                refresh_token = google_tokens["refresh_token"]
+                try:
+                    iv_refresh, ct_refresh, tag_refresh = encrypt_token(refresh_token, settings.ENCRYPTION_KEY_BYTES)
+                    print(
+                        f"Refresh Token encrypted. IV length: {len(iv_refresh)}, CT length: {len(ct_refresh)}, Tag length: {len(tag_refresh)}")
+                    # Example decryption (for testing the utils)
+                    decrypted_refresh_token = decrypt_token(iv_refresh, ct_refresh, tag_refresh,
+                                                            settings.ENCRYPTION_KEY_BYTES)
+                    if decrypted_refresh_token == refresh_token:
+                        print("Refresh Token decryption successful (test).")
+                    else:
+                        print("ERROR: Refresh Token decryption test FAILED.")
+                except Exception as e:
+                    print(f"ERROR during refresh token encryption/decryption test: {e}")
+
+              # Added for generating GUIDs
+            new_user_id = str(uuid.uuid4())  # Generate a unique GUID for the user
+            save_success = save_user_tokens(
+                app_user_id=new_user_id,  # Generate a unique GUID for the user
+                access_token=access_token,
+                access_token_expires_in=google_tokens.get('expires_in'),
+                scopes=google_tokens.get('scope'),
+                refresh_token=refresh_token,
+                id_token_str=google_tokens.get('id_token')
+            )
+
+            if not save_success:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                    detail="Failed to save user tokens to database.")
+
+            # Test retrieval (optional, for debugging this task)
+            retrieved_tokens = get_decrypted_user_tokens(new_user_id)
+            if retrieved_tokens:
+                print(f"TEST: Successfully retrieved and decrypted tokens for {new_user_id}")
+                print(
+                    f"TEST: Retrieved access token matches original: {retrieved_tokens.get('access_token') == access_token}")
+            else:
+                print(f"TEST: Failed to retrieve/decrypt tokens for {new_user_id}")
+
+            return {
+                "message": "Successfully exchanged authorization code for Google tokens.",
+                "user_id": new_user_id,
+                "tokens_received": {
+                    "access_token_present": "access_token" in google_tokens,
+                    "refresh_token_present": "refresh_token" in google_tokens,
+                    "id_token_present": "id_token" in google_tokens,
+                    "scopes": google_tokens.get("scope"),
+                }
+            }
+
+        except httpx.HTTPStatusError as e:
+            # Error response from Google's token endpoint
+            error_details = e.response.json() if e.response.content else {}
+            print(f"HTTP error from Google: {e.response.status_code} - {error_details}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,  # Or map to a more specific error
+                detail=f"Failed to exchange code with Google: {error_details.get('error_description', e.response.text)}"
+            )
+        except httpx.RequestError as e:
+            # Network error or other issue with the request to Google
+            print(f"Request error to Google: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Could not connect to Google authentication service: {str(e)}"
+            )
+        except Exception as e:
+            # Catch any other unexpected errors during the process
+            print(f"Unexpected error during token exchange: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"An unexpected error occurred: {str(e)}"
+            )
+
+
+@router.post(f"/auth/google/disconnect", tags=["Authentication"])
+async def disconnect_google_calendar(current_user: CurrentUser):
+    # Example usage of delete_user_tokens
+    success = delete_user_tokens(current_user.id)
+    if success:
+        return {"message": "Successfully disconnected Google Calendar and deleted tokens."}
+    else:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user tokens.")
+
+
+@router.get(f"/calendar/meta/list-calendars", tags=["Calendar"])
+async def list_google_calendars(current_user: CurrentUser):
+    tokens = get_decrypted_user_tokens(current_user.id)
+    if not tokens or 'access_token' not in tokens:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User tokens not found or invalid.")
+    # Example of how refresh logic might be triggered (actual trigger in Task 3.2)
+    if tokens.get('access_token_expires_at', 0) < time.time() + 60:  # If expires in next 60s
+        print(f"Access token for {current_user.id} is expired or nearing expiry. Attempting refresh...")
+        new_access_token = await refresh_google_access_token(current_user.id)
+        if not new_access_token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="Failed to refresh access token. Please reconnect Google Calendar.")
+        tokens['access_token'] = new_access_token  # Use the new token for this request
+        # The expiry would also be updated in DB, but for this immediate request, we use the new token.
+
+    return {"message": "Tokens available.", "user_id": current_user.id,
+            "access_token_snippet": tokens['access_token'][:10] + "..."}
+
+
+@router.post(f"/auth/google/refresh-test", tags=["Authentication"])
+async def test_refresh_token(current_user: CurrentUser):
+    new_token = await refresh_google_access_token(current_user.id)
+    if new_token:
+        return {"message": "Token refresh attempted successfully.", "new_access_token_snippet": new_token[:10] + "..."}
+    else:
+        return {"message": "Token refresh failed or no refresh token available."}

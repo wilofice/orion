@@ -26,7 +26,7 @@ from models import UserPreferences
 # From calendar_client.py (Task 2)
 from calendar_client import AbstractCalendarClient
 import threading
-
+from settings_v1 import settings
 
 class GenAIClientSingleton:
     _instance = None
@@ -46,10 +46,7 @@ class GenAIClientSingleton:
 
     def _create_genai_client(self, *args, **kwargs):
         # Replace with actual GenAI client initialization logic
-        with open('config.json') as config_file:
-            config = json.load(config_file)
-            api_key = config['api_key']
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)  # Use settings or config for API key
         return client
 
     @staticmethod

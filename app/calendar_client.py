@@ -5,15 +5,14 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, date, time
 from typing import List, Dict, Any, Optional
 
+from dynamodb import refresh_google_access_token
 # Assuming models.py is in the same directory or accessible via PYTHONPATH
 from models import TimeSlot
 
 from google.oauth2.credentials import Credentials as GoogleCredentials
 from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build, Resource
 from googleapiclient.errors import HttpError
-import os.path # To handle credential file paths
 from scheduler_logic import filter_slots_by_preferences # Import the new function
 from models import UserPreferences
 
@@ -26,6 +25,8 @@ CLIENT_SECRET_FILE = 'credentials/client_secret.json'
 TOKEN_FILE = 'credentials/token.json'
 # TODO: Define path for service account key file if using that method
 SERVICE_ACCOUNT_FILE = 'credentials/service_account.json'
+import asyncio
+
 
 # --- Custom Exceptions ---
 
@@ -104,105 +105,93 @@ class AbstractCalendarClient(ABC):
 
 class GoogleCalendarAPIClient(AbstractCalendarClient):
     """
-    Client for interacting with the Google Calendar API.
-
-    Handles authentication (OAuth 2.0 for user delegation recommended)
-    and provides methods to fetch calendar data.
+    Client for interacting with the Google Calendar API using provided token information.
     """
-    def __init__(self,
-                 client_secret_path: str = CLIENT_SECRET_FILE,
-                 token_path: str = TOKEN_FILE,
-                 scopes: List[str] = SCOPES):
+    def __init__(self, token_info: Dict[str, Any], scopes: List[str] = SCOPES):
         """
-        Initializes the Google Calendar API client.
+        Initializes the Google Calendar API client using token information.
 
         Args:
-            client_secret_path: Path to the OAuth 2.0 client secrets file.
-            token_path: Path to store/load the user's access/refresh token.
-            scopes: List of Google API scopes required.
+            token_info: A dictionary containing the following keys:
+                - access_token: The OAuth 2.0 access token.
+                - access_token_expires_at: Expiration time of the access token.
+                - scopes: List of authorized scopes.
+                - google_user_id: The Google user ID.
+                - refresh_token: The OAuth 2.0 refresh token.
         """
-        self.client_secret_path = client_secret_path
-        self.token_path = token_path
+        self.token_info = token_info
         self.scopes = scopes
-        self._credentials: Optional[GoogleCredentials] = None
         self._service: Optional[Resource] = None
-        self.logger = logging.getLogger(__name__) # Setup logging
+        self.logger = logging.getLogger(__name__)  # Setup logging
 
+    @property
     def authenticate(self) -> None:
         """
-        Authenticates the user using OAuth 2.0 flow.
-        Loads existing credentials or initiates the flow if needed.
-        Builds the Google Calendar API service resource.
+        Authenticates the user using the provided token information and builds the service object.
 
         Raises:
             AuthenticationError: If authentication fails.
-            FileNotFoundError: If the client_secret_path is invalid.
         """
-        self.logger.info("Attempting Google Calendar authentication...")
-        creds = None
-        # The file token.json stores the user's access and refresh tokens, and is
-        # created automatically when the authorization flow completes for the first time.
-        if os.path.exists(self.token_path):
-            try:
-                creds = GoogleCredentials.from_authorized_user_file(self.token_path, self.scopes)
-                self.logger.info("Loaded credentials from token file.")
-            except Exception as e:
-                self.logger.warning(f"Failed to load credentials from {self.token_path}: {e}. Will attempt re-authentication.")
-                creds = None # Ensure creds is None if loading failed
+        self.logger.info("Authenticating using provided token information...")
 
-        # If there are no (valid) credentials available, let the user log in.
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    self.logger.info("Refreshing expired credentials...")
-                    creds.refresh(Request())
-                    self.logger.info("Credentials refreshed successfully.")
-                except Exception as e:
-                    self.logger.error(f"Failed to refresh credentials: {e}")
-                    # Consider deleting token file if refresh fails persistently
-                    # os.remove(self.token_path) # Be careful with automatic deletion
-                    raise AuthenticationError(f"Failed to refresh token: {e}") from e
-            else:
-                self.logger.info("No valid credentials found, initiating OAuth flow...")
-                if not os.path.exists(self.client_secret_path):
-                     self.logger.error(f"Client secrets file not found at: {self.client_secret_path}")
-                     raise FileNotFoundError(f"Client secrets file not found at: {self.client_secret_path}")
-
-                try:
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        self.client_secret_path, self.scopes)
-                    # TODO: Adapt this for a web server flow if not running locally.
-                    # For local runs, this opens a browser for user consent.
-                    creds = flow.run_local_server(port=0)
-                    self.logger.info("OAuth flow completed successfully.")
-                except Exception as e:
-                    self.logger.error(f"OAuth flow failed: {e}")
-                    raise AuthenticationError(f"OAuth flow failed: {e}") from e
-
-            # Save the credentials for the next run
-            try:
-                os.makedirs(os.path.dirname(self.token_path), exist_ok=True) # Ensure directory exists
-                with open(self.token_path, 'w') as token:
-                    token.write(creds.to_json())
-                self.logger.info(f"Credentials saved to {self.token_path}")
-            except Exception as e:
-                self.logger.error(f"Failed to save credentials to {self.token_path}: {e}")
-                # Non-fatal, but log it.
-
-        if not creds:
-             self.logger.error("Authentication process failed to produce valid credentials.")
-             raise AuthenticationError("Failed to obtain valid credentials after authentication process.")
-
-        self._credentials = creds
-
-        # Build the service object
         try:
-            self._service = build('calendar', 'v3', credentials=self._credentials)
+            # Build credentials from the access token and refresh token
+            credentials = GoogleCredentials(
+                token=self.token_info["access_token"],
+                refresh_token=self.token_info["refresh_token"],
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=None,  # Not required for this flow
+                client_secret=None,  # Not required for this flow
+                scopes=self.scopes,
+            )
+
+            # Check if the token is expired and refresh if necessary
+            if credentials.expired and credentials.refresh_token:
+                self.logger.info("Access token expired. Attempting to refresh...")
+                credentials.refresh(Request())
+                self.logger.info("Access token refreshed successfully.")
+            if not credentials.valid:
+                new_token_data = asyncio.run(refresh_google_access_token(self.token_info["app_user_id"]))
+                if new_token_data:
+                    self.logger.error("Token refresh attempted successfully")
+                    credentials = GoogleCredentials(
+                        token=new_token_data["access_token"],
+                        refresh_token=new_token_data["refresh_token"],
+                        token_uri="https://oauth2.googleapis.com/token",
+                        client_id=None,  # Not required for this flow
+                        client_secret=None,  # Not required for this flow
+                        scopes=self.scopes,
+                    )
+                    return
+                else:
+                    self.logger.error("Token refresh failed or no refresh token available.")
+                self.logger.error("Invalid credentials. Cannot proceed.")
+                raise AuthenticationError("Invalid credentials.")
+            # Build the service object
+            self._service = build('calendar', 'v3', credentials=credentials)
             self.logger.info("Google Calendar API service built successfully.")
+
         except Exception as e:
-            self.logger.error(f"Failed to build Google Calendar service: {e}")
-            self._service = None # Ensure service is None if build fails
-            raise AuthenticationError(f"Failed to build Google Calendar service: {e}") from e
+            self.logger.error(f"Failed to authenticate and build service: {e}")
+            raise AuthenticationError(f"Failed to authenticate: {e}") from e
+
+    def _get_service(self) -> Resource:
+        """
+        Ensures the client is authenticated and returns the service resource.
+
+        Returns:
+            The Google Calendar API service resource.
+
+        Raises:
+            AuthenticationError: If the service is not available.
+        """
+        if not self._service:
+            self.logger.warning("Service not available. Attempting authentication.")
+            self.authenticate
+            if not self._service:
+                self.logger.critical("Authentication failed, service could not be built.")
+                raise AuthenticationError("Cannot get service resource: Authentication failed or service not built.")
+        return self._service
 
     # --- Service Account Authentication (Alternative) ---
     # def authenticate_service_account(self, service_account_file: str = SERVICE_ACCOUNT_FILE, scopes: List[str] = SCOPES) -> None:
@@ -227,7 +216,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
         if not self._service:
             self.logger.warning("Service not available. Attempting authentication.")
             # Decide which auth method to call by default or based on config
-            self.authenticate() # Defaulting to user OAuth flow
+            self.authenticate  # Defaulting to user OAuth flow
             # self.authenticate_service_account() # Or use this if service account is the primary method
             if not self._service: # Check again after attempting auth
                  self.logger.critical("Authentication failed, service could not be built.")
@@ -551,7 +540,7 @@ if __name__ == '__main__':
     try:
         client = GoogleCalendarAPIClient()
         # This will trigger the OAuth flow if token.json is missing or invalid
-        client.authenticate() # Explicitly authenticate first
+        client.authenticate  # Explicitly authenticate first
         logger.info("Authentication successful (or token loaded).")
 
         # Define time range (MUST be timezone-aware)

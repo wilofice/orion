@@ -5,10 +5,12 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     PROJECT_NAME: str = "AI Calendar Events Manager Backend"
     API_V1_STR: str = "/api/v1"
-    GOOGLE_CLIENT_ID: str  # This is now the mobile app's client ID as per user's findings
+    GOOGLE_CLIENT_ID_IOS: str  # This is now the mobile app's client ID as per user's findings
+    GOOGLE_CLIENT_ID_ANDROID: str  # This is now the mobile app's client ID as per user's findings
     # GOOGLE_CLIENT_SECRET is no longer used in token exchange as per user's findings
     AWS_REGION: str = "us-east-1"
-    AWS_DYNAMODB_ENDPOINT_URL: Optional[str] = None
+    DYNAMODB_USER_TOKENS_TABLE_NAME: str = "UserGoogleTokens"
+    AWS_DYNAMODB_ENDPOINT_URL: Optional[str] = "http://localhost:8000/"
 
     # ENCRYPTION_KEY must be a 32-byte (256-bit) key.
     # It should be hex-encoded in the .env file (64 hex characters).
@@ -18,6 +20,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     GOOGLE_TOKEN_URL: str = "https://oauth2.googleapis.com/token"
+    GEMINI_API_KEY: str = "your-gemini-api-key"  # Ensure this is set in your .env file
 
     # Derived property for the actual encryption key bytes
     @property
@@ -30,3 +33,5 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = 'utf-8'
+
+settings = Settings()

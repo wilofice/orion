@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 import uuid
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 # Assuming pymongo or motor is used for MongoDB interaction
@@ -141,6 +142,7 @@ class MongoSessionManager(AbstractSessionManager):
         #     return []
         # --- End Placeholder ---
         # Dummy implementation:
+        # TODO : Replace timzone with the actual timezone of the user
         if session_id == "existing_session_123":
              # Simulate returning some history
              return [
@@ -149,9 +151,11 @@ class MongoSessionManager(AbstractSessionManager):
              ]
         return [
             ConversationTurn(role=ConversationRole.USER,
-                             parts=[''' 
+                             parts=[f''' 
                                 You are an advanced language model responsible for scheduling activities based on user preferences and calendar availability. When a user provides a prompt, you should intelligently infer and guess any missing parameters from the context provided by the user. Do not enforce the requirement for the user to specify every precise parameter. Instead, use your understanding to fill in the gaps and ensure the function call is complete and valid.
                                 Your task is to create a calendar event based on the user's request. You will receive a function call with parameters such as event name, start time, end time, and any other relevant details. If the user does not specify all required parameters, you should infer and guess the missing values based on the context provided.
+Current Date and Time : {datetime.now(ZoneInfo("Europe/Paris")).isoformat()}
+Current zone info is : {ZoneInfo("Europe/Paris")}
 Instructions:
 
 Infer Missing Parameters: If the user does not specify all required parameters, use the context provided to infer and guess the missing values.

@@ -7,18 +7,11 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from pydantic import BaseModel, Field, ConfigDict
 
-# Attempt to import dependent models and interfaces
-try:
-    # Assuming models.py is accessible
-    from models import UserPreferences, DayOfWeek
+from models import UserPreferences, DayOfWeek
     # Assuming calendar_client.py defines the abstract client interface
-    from calendar_client import AbstractCalendarClient
-    # Assuming gemini_interface.py defines FunctionCall
-    from gemini_interface import FunctionCall
-except ImportError:
-    # Fallback for running script directly or if structure differs
-    print("Warning: Could not import dependent models/interfaces. Using dummy classes.")
-    # Define dummy classes if needed for standalone testing
+from calendar_client import AbstractCalendarClient
+# Assuming gemini_interface.py defines FunctionCall
+from gemini_interface import FunctionCall
 
 # --- Enums ---
 

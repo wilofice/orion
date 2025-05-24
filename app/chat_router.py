@@ -1,12 +1,8 @@
-import uuid
 import logging
-from enum import Enum
-from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, Depends, HTTPException, status as http_status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
-from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from orchestration_service import handle_chat_request
 # --- Import Abstract Interfaces for Dependency Injection ---
@@ -14,12 +10,23 @@ from session_manager import AbstractSessionManager, MongoSessionManager
 from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
 from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
-from models import ChatRequest, ChatResponse, ErrorDetail, ResponseStatus
+from models import ChatRequest, ChatResponse, ErrorDetail
+from dynamodb import get_decrypted_user_tokens
+
 from mangum import Mangum
 # --- Configuration ---
 # In a real app, use environment variables or a config file
-API_VERSION = "v1"
-API_PREFIX = f"/{API_VERSION}"
+
+
+from fastapi import APIRouter, HTTPException, status
+
+# Initialize an APIRouter instance for user-related routes
+# The 'prefix' adds '/users' before all paths defined in this router.
+# 'tags' helps organize documentation in Swagger UI.
+router = APIRouter(
+    prefix="/chat",
+    tags=["Chat"],
+)
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -45,7 +52,7 @@ def get_tool_executor() -> AbstractToolExecutor:
     return AbstractToolExecutor()
 
 
-def get_calendar_client() -> AbstractCalendarClient:
+def get_calendar_client(email: str) -> AbstractCalendarClient:
     # Replace with logic to get/create a Calendar Client instance
     # This might involve handling authentication per user if not using service account
     logger.warning("Using dummy GoogleCalendarAPIClient instance")
@@ -53,7 +60,9 @@ def get_calendar_client() -> AbstractCalendarClient:
     try:
         scopes = ['https://www.googleapis.com/auth/calendar']  # Define your scopes
         # Attempt to create, might need error handling if creds missing
-        return GoogleCalendarAPIClient()
+
+        decrypted_tokens = get_decrypted_user_tokens(email)
+        return GoogleCalendarAPIClient(decrypted_tokens, scopes)
     except Exception as e:
         logger.error(f"Failed to instantiate GoogleCalendarAPIClient: {e}")
         # Raise an exception that FastAPI can handle, e.g., 503 Service Unavailable
@@ -110,25 +119,12 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(beare
 
 
 # --- FastAPI Application ---
-app = FastAPI(
-    title="Orion Orchestration Service",
-    description="API service to handle user chat prompts and orchestrate LLM calls and tool execution.",
-    version="0.1.0",
-    root_path="/Prod"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 # --- API Endpoint (Task 3.1) ---
 # --- API Endpoint (Improved with Dependency Injection) ---
-@app.post(
-    f"/v1/chat/prompt", # Define prefix directly or use API_PREFIX constant
+@router.post(
+    f"/prompt", # Define prefix directly or use API_PREFIX constant
     response_model=ChatResponse,
     summary="Process a user chat prompt",
     description="Sends user input to the Orion orchestration service for processing via LLM and potential tool execution.",
@@ -150,23 +146,25 @@ async def process_chat_prompt(
     session_manager: AbstractSessionManager = Depends(get_session_manager),
     gemini_client: AbstractGeminiClient = Depends(get_gemini_client),
     tool_executor: AbstractToolExecutor = Depends(get_tool_executor),
-    calendar_client: AbstractCalendarClient = Depends(get_calendar_client)
 ) -> ChatResponse:
     """
     Handles incoming user chat prompts by calling the core orchestration logic
     with injected dependencies.
     """
+    calendar_client = get_calendar_client(request.user_id)
     logger.info(f"API Endpoint: Received chat prompt for user: {request.user_id}, session: {request.session_id}")
 
     # --- Authorization Check (Optional but Recommended) ---
     # Ensure the user_id from the token matches the one in the request body
-    if user_id_from_token != request.user_id:
-        logger.warning(f"Token user ID '{user_id_from_token}' does not match request user ID '{request.user_id}'.")
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="User ID mismatch - cannot process request for another user."
-        )
-    logger.info(f"User '{user_id_from_token}' authorized.")
+
+    "TO BE UNCOMMENTED"
+    # if user_id_from_token != request.user_id:
+    #     logger.warning(f"Token user ID '{user_id_from_token}' does not match request user ID '{request.user_id}'.")
+    #     raise HTTPException(
+    #         status_code=http_status.HTTP_403_FORBIDDEN,
+    #         detail="User ID mismatch - cannot process request for another user."
+    #     )
+    # logger.info(f"User '{user_id_from_token}' authorized.")
 
     # --- Call the core orchestration logic ---
     try:
@@ -199,7 +197,7 @@ async def process_chat_prompt(
 
 
 # --- Root Endpoint (Optional - for health check/info) ---
-@app.get("/", include_in_schema=False)
+@router.get("/", include_in_schema=False)
 async def root():
     return {"message": "Orion Orchestration Service is running."}
 
@@ -209,11 +207,10 @@ class CreateUserRequest(BaseModel):
     email: str
     password: str  # In a real app, ensure this is hashed before storing
 
-@app.post(
-    "/v1/users/create",
+@router.post(
+    "/users/create",
     summary="Create a new user",
     description="Allows the creation of a new user without authentication.",
-    tags=["Users"]
 )
 async def create_user(request: CreateUserRequest):
     """
@@ -242,4 +239,3 @@ async def create_user(request: CreateUserRequest):
 
 
 
-lambda_handler = Mangum(app, lifespan="off")
