@@ -240,15 +240,11 @@ async def handle_chat_request(
         # 8.2 Load history and context
         logger.info(f"[Session: {session_id}] Loading history and context for user {user_id}")
         history: List[ConversationTurn] = await session_manager.get_history(session_id)
-        if not history and request.session_id: # Check if session ID was provided but not found
+        if history == None or len(history) == 0 : # Check if session ID was provided but not found
              logger.warning(f"[Session: {session_id}] Provided session ID not found, starting new history.")
              # Optionally create session explicitly if needed by append_turn implementation
-             # await session_manager.create_session(user_id, session_id) # If create takes session_id
-        elif not history:
-             logger.info(f"[Session: {session_id}] No history found, starting new session.")
-             # Create session if it doesn't exist (create_session should handle this)
-             # If create_session was already called implicitly by get_history or needs explicit call:
-             # await session_manager.create_session(user_id, session_id) # If create takes session_id
+             await session_manager.create_session(user_id) # If create takes session_id
+             history = await session_manager.get_history(session_id)
 
         preferences = await get_user_preferences(user_id) # Task ORCH-9 (using dummy here)
 
