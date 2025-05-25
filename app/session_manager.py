@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 
 # Attempt to import ConversationTurn from gemini_interface
 from gemini_interface import ConversationTurn, ConversationRole
+from settings_v1 import settings
+from dynamodb import get_dynamodb_resource
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +234,50 @@ Suggest Next Activities: Make suggestions about possible next activities the use
         # Dummy implementation:
         print(f"  (Dummy) Created session document for {session_id}")
         return session_id
+
+
+class DynamoSessionManager(AbstractSessionManager):
+    """Session manager implementation backed by DynamoDB."""
+
+    def __init__(self):
+        self.table = get_dynamodb_resource().Table(
+            settings.DYNAMODB_CHAT_SESSIONS_TABLE_NAME
+        )
+
+    async def create_session(self, user_id: str) -> str:
+        session_id = str(uuid.uuid4())
+        now = int(datetime.now(timezone.utc).timestamp())
+        item = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "created_at": now,
+            "last_updated_at": now,
+            "history": [],
+        }
+        self.table.put_item(Item=item)
+        return session_id
+
+    async def append_turn(self, session_id: str, turn: ConversationTurn):
+        if not turn.timestamp:
+            turn.timestamp = datetime.now(timezone.utc)
+        turn_dict = turn.model_dump(mode="json")
+        self.table.update_item(
+            Key={"session_id": session_id},
+            UpdateExpression="SET history = list_append(if_not_exists(history, :empty), :turn), last_updated_at = :updated",
+            ExpressionAttributeValues={
+                ":turn": [turn_dict],
+                ":updated": int(turn.timestamp.timestamp()),
+                ":empty": [],
+            },
+        )
+
+    async def get_history(self, session_id: str) -> List[ConversationTurn]:
+        response = self.table.get_item(Key={"session_id": session_id})
+        item = response.get("Item")
+        if not item:
+            return []
+        history_data = item.get("history", [])
+        return [ConversationTurn(**d) for d in history_data]
 
 
 # --- Example Usage ---
