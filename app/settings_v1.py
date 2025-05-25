@@ -4,13 +4,13 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "AI Calendar Events Manager Backend"
-    API_V1_STR: str = "/api/v1"
+    API_V1_STR: str = "/Prod"
     GOOGLE_CLIENT_ID_IOS: str  # This is now the mobile app's client ID as per user's findings
     GOOGLE_CLIENT_ID_ANDROID: str  # This is now the mobile app's client ID as per user's findings
     # GOOGLE_CLIENT_SECRET is no longer used in token exchange as per user's findings
-    AWS_REGION: str = "us-east-1"
+    AWS_REGION: str = "eu-north-1"
     DYNAMODB_USER_TOKENS_TABLE_NAME: str = "UserGoogleTokens"
-    AWS_DYNAMODB_ENDPOINT_URL: Optional[str] = "http://localhost:8000/"
+    AWS_DYNAMODB_ENDPOINT_URL: Optional[str] = None  # Optional for local development/testing
 
     # ENCRYPTION_KEY must be a 32-byte (256-bit) key.
     # It should be hex-encoded in the .env file (64 hex characters).

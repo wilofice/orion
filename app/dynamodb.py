@@ -63,7 +63,7 @@ def save_user_tokens(
         app_user_id: str, access_token: str, access_token_expires_in: int,
         scopes: Optional[str] = None, refresh_token: Optional[str] = None,
         id_token_str: Optional[str] = None, existing_item: Optional[Dict[str, Any]] = None
-) -> bool:
+) -> str:
     current_timestamp = int(time.time())
     access_token_expires_at = current_timestamp + access_token_expires_in
     iv_access, ct_access, tag_access = encrypt_token(access_token, settings.ENCRYPTION_KEY_BYTES)
@@ -107,12 +107,14 @@ def save_user_tokens(
 
         user_tokens_table.put_item(Item=item_to_save)
         print(f"Successfully saved tokens for app_user_id: {app_user_id}")
-        return True
+        return "success"
     except ClientError as e:
         print(f"Error saving tokens to DynamoDB for {app_user_id}: {e.response['Error']['Message']}")
+        return f"Error saving tokens to DynamoDB for {app_user_id}: {e.response['Error']['Message']}"
     except Exception as e:
         print(f"An unexpected error occurred during token save: {e}")
-    return False
+        return f"An unexpected error occurred during token save: {e}"
+    return "failed"
 
 
 def get_decrypted_user_tokens(app_user_id: str) -> Optional[Dict[str, Any]]:
@@ -265,8 +267,8 @@ async def refresh_google_access_token(app_user_id: str) -> Optional[str]:
                 existing_item=stored_item_raw  # Pass the original raw item to help preserve fields
             )
 
-            if not save_success:
-                print(f"ERROR: Failed to save refreshed tokens for {app_user_id}.")
+            if not save_success == "success":
+                print(f"ERROR: Failed to save refreshed tokens for {app_user_id}. {save_success}")
                 return None  # Or raise an exception
 
             return new_token_data

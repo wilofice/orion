@@ -180,9 +180,9 @@ async def connect_google_calendar(
                 id_token_str=google_tokens.get('id_token')
             )
 
-            if not save_success:
+            if not save_success == "success":
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                    detail="Failed to save user tokens to database.")
+                                    detail=save_success)
 
             # Test retrieval (optional, for debugging this task)
             retrieved_tokens = get_decrypted_user_tokens(new_user_id)

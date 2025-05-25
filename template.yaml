@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  mangum-sam-orion-api
+
+  ORION SAM Template for fastapi on lambda, via Mangum!
+
+Resources:
+  OrionApiFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      PackageType: Image
+      ImageUri: 487239600670.dkr.ecr.eu-north-1.amazonaws.com/orionimages/orion@sha256:2a0652a4436898eec09a53d752b327c5d1b679dbe6b35b717400aff83ebe311c
+      Architectures:
+        - x86_64
+      MemorySize: 512
+      Timeout: 15
+      Events:
+        ProxyRoute:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+        RootRoute:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  OrionApi:
+    Description: "API Gateway endpoint URL for Prod stage for ORION function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+  OrionFunction:
+    Description: "ORION Lambda Function ARN"
+    Value: !GetAtt OrionApiFunction.Arn
+  OrionFunctionIamRole:
+    Description: "Implicit IAM Role created for ORION function"
+    Value: !GetAtt OrionApiFunctionRole.Arn
