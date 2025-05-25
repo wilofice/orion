@@ -2,11 +2,12 @@ import base64
 import json
 import os
 import time
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 import boto3
 import httpx
 from boto3.dynamodb.types import Binary
+from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -383,3 +384,20 @@ def decrypt_token(iv: bytes, ciphertext: bytes, auth_tag: bytes, key: bytes) -> 
         # indicating the data may have been tampered with or the key is wrong.
         print("ERROR: Decryption failed - InvalidTag. Check encryption key or data integrity.")
         raise  # Re-raise the exception to be handled by the caller
+
+
+def get_user_conversations(user_id: str) -> List[Dict[str, Any]]:
+    """Return all chat sessions for the given user from DynamoDB."""
+    try:
+        response = chat_sessions_table.scan(
+            FilterExpression=Attr("user_id").eq(user_id)
+        )
+        return response.get("Items", [])
+    except ClientError as e:
+        print(
+            f"Error retrieving conversations for {user_id}: {e.response['Error']['Message']}"
+        )
+        return []
+    except Exception as e:
+        print(f"An unexpected error occurred during conversation retrieval: {e}")
+        return []
