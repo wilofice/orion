@@ -17,3 +17,8 @@ Two DynamoDB tables are used by default:
 `DynamoSessionManager` (defined in `app/session_manager.py`) uses the
 `ChatSessions` table to persist conversation history. It is now the default
 session manager returned by `get_session_manager` in `app/chat_router.py`.
+
+## Conversation History Endpoint
+
+`GET /Prod/conversations/{user_id}` returns all chat sessions for the given user
+as a list of `Conversation` objects.
