@@ -54,9 +54,34 @@ def create_user_tokens_table():
     except Exception as e:
         print(f"Error creating table {table_name}: {e}")
 
+
+def create_chat_sessions_table():
+    dynamodb = get_dynamodb_resource()
+    table_name = settings.DYNAMODB_CHAT_SESSIONS_TABLE_NAME
+
+    try:
+        table = dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[
+                {"AttributeName": "session_id", "KeyType": "HASH"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "session_id", "AttributeType": "S"},
+            ],
+            ProvisionedThroughput={
+                "ReadCapacityUnits": 5,
+                "WriteCapacityUnits": 5,
+            },
+        )
+        table.wait_until_exists()
+        print(f"Table {table_name} created successfully.")
+    except Exception as e:
+        print(f"Error creating table {table_name}: {e}")
+
 #create_user_tokens_table()
 
 user_tokens_table = get_dynamodb_resource().Table(settings.DYNAMODB_USER_TOKENS_TABLE_NAME)
+chat_sessions_table = get_dynamodb_resource().Table(settings.DYNAMODB_CHAT_SESSIONS_TABLE_NAME)
 
 
 def save_user_tokens(

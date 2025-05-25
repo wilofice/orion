@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from orchestration_service import handle_chat_request
 # --- Import Abstract Interfaces for Dependency Injection ---
-from session_manager import AbstractSessionManager, MongoSessionManager
+from session_manager import AbstractSessionManager, DynamoSessionManager
 from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
 from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 def get_session_manager() -> AbstractSessionManager:
     # Replace with logic to get/create a session manager instance
     # Might involve getting DB connection from another dependency
-    logger.warning("Using dummy MongoSessionManager instance")
-    return MongoSessionManager()  # Requires DB connection setup elsewhere
+    logger.warning("Using DynamoSessionManager instance")
+    return DynamoSessionManager()
 
 
 def get_gemini_client() -> AbstractGeminiClient:
