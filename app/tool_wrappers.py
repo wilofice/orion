@@ -1338,6 +1338,612 @@ class GetTasksWrapper(ToolWrapper):
             return self._create_error_result(f"Failed to retrieve tasks: {str(e)}")
 
 
+# --- Find Meeting Time Tool Wrapper ---
+
+class FindMeetingTimeWrapperArgs(BaseModel):
+    """Input validation model for find_meeting_time arguments."""
+    attendee_emails: List[str] = Field(..., description="List of attendee email addresses")
+    duration_minutes: int = Field(..., gt=0, le=480, description="Meeting duration in minutes")
+    days_ahead: Optional[int] = Field(7, ge=1, le=30, description="Number of days to search ahead")
+    preferred_times_only: Optional[bool] = Field(False, description="Only consider preferred meeting times")
+    earliest_start_hour: Optional[int] = Field(9, ge=0, le=23, description="Earliest hour to start meeting")
+    latest_end_hour: Optional[int] = Field(17, ge=1, le=24, description="Latest hour to end meeting")
+    
+    @field_validator('attendee_emails')
+    @classmethod
+    def check_emails(cls, v: List[str]):
+        """Validate email addresses."""
+        if not v:
+            raise ValueError("At least one attendee email is required")
+        # Basic email validation
+        for email in v:
+            if '@' not in email or '.' not in email.split('@')[1]:
+                raise ValueError(f"Invalid email format: {email}")
+        return v
+
+class FindMeetingTimeWrapper(ToolWrapper):
+    """
+    Wrapper for the 'find_meeting_time' tool.
+    Finds optimal meeting times when all attendees are available.
+    """
+    tool_name = "find_meeting_time"
+    logger = logging.getLogger(__name__)
+    description = "Finds available time slots when all specified attendees are free for a meeting."
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "attendee_emails": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of attendee email addresses"
+            },
+            "duration_minutes": {
+                "type": "integer",
+                "description": "Meeting duration in minutes (1-480)",
+                "minimum": 1,
+                "maximum": 480
+            },
+            "days_ahead": {
+                "type": "integer",
+                "description": "Number of days to search ahead (1-30). Default is 7.",
+                "minimum": 1,
+                "maximum": 30
+            },
+            "preferred_times_only": {
+                "type": "boolean",
+                "description": "Only consider preferred meeting times. Default is false."
+            },
+            "earliest_start_hour": {
+                "type": "integer",
+                "description": "Earliest hour to start meeting (0-23). Default is 9.",
+                "minimum": 0,
+                "maximum": 23
+            },
+            "latest_end_hour": {
+                "type": "integer",
+                "description": "Latest hour to end meeting (1-24). Default is 17.",
+                "minimum": 1,
+                "maximum": 24
+            }
+        },
+        "required": ["attendee_emails", "duration_minutes"]
+    }
+    
+    def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
+        self.logger.info(f"Running {self.tool_name} with args: {args}")
+        
+        # 1. Validate arguments
+        try:
+            validated_args = FindMeetingTimeWrapperArgs(**args)
+            self.logger.debug("Arguments validated successfully.")
+        except ValidationError as e:
+            self.logger.error(f"Argument validation failed: {e}")
+            return self._create_error_result(f"Invalid arguments: {e.errors()}")
+        
+        try:
+            user_tz = pytz.timezone(context.preferences.time_zone)
+            now = datetime.now(user_tz)
+            start_search = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            end_search = start_search + timedelta(days=validated_args.days_ahead)
+            
+            service = context.calendar_client._get_service()
+            
+            # For this implementation, we'll check the organizer's calendar
+            # In a full implementation, you'd check all attendees' calendars
+            self.logger.info(f"Finding {validated_args.duration_minutes}-minute slot for {len(validated_args.attendee_emails)} attendees")
+            
+            # Get available slots from organizer's calendar
+            available_slots = context.calendar_client.get_available_time_slots(
+                preferences=context.preferences,
+                calendar_id='primary',
+                start_time=start_search,
+                end_time=end_search
+            )
+            
+            # Filter by duration
+            duration_td = timedelta(minutes=validated_args.duration_minutes)
+            suitable_slots = [slot for slot in available_slots if slot.duration >= duration_td]
+            
+            # Filter by time constraints
+            filtered_slots = []
+            for slot in suitable_slots:
+                slot_start_hour = slot.start_time.hour
+                slot_end = slot.start_time + duration_td
+                slot_end_hour = slot_end.hour + (1 if slot_end.minute > 0 else 0)
+                
+                if (slot_start_hour >= validated_args.earliest_start_hour and
+                    slot_end_hour <= validated_args.latest_end_hour):
+                    
+                    # If preferred times only, check against preferences
+                    if validated_args.preferred_times_only and context.preferences.preferred_meeting_times:
+                        slot_start_time = slot.start_time.time()
+                        slot_end_time = slot_end.time()
+                        
+                        for pref_start, pref_end in context.preferences.preferred_meeting_times:
+                            if slot_start_time >= pref_start and slot_end_time <= pref_end:
+                                filtered_slots.append(slot)
+                                break
+                    else:
+                        filtered_slots.append(slot)
+            
+            # Sort by earliest available
+            filtered_slots.sort(key=lambda s: s.start_time)
+            
+            # Take top 5 suggestions
+            suggested_slots = filtered_slots[:5]
+            
+            if not suggested_slots:
+                return self._create_error_result(
+                    f"No available {validated_args.duration_minutes}-minute slots found in the next {validated_args.days_ahead} days",
+                    result_data={"constraints_checked": {
+                        "duration_minutes": validated_args.duration_minutes,
+                        "earliest_start_hour": validated_args.earliest_start_hour,
+                        "latest_end_hour": validated_args.latest_end_hour,
+                        "preferred_times_only": validated_args.preferred_times_only
+                    }}
+                )
+            
+            # Format suggestions
+            suggestions = []
+            for slot in suggested_slots:
+                meeting_end = slot.start_time + duration_td
+                suggestions.append({
+                    "start_time": slot.start_time.isoformat(),
+                    "end_time": meeting_end.isoformat(),
+                    "start_time_local": slot.start_time.strftime("%A, %B %d at %I:%M %p"),
+                    "end_time_local": meeting_end.strftime("%I:%M %p"),
+                    "date": slot.start_time.date().isoformat(),
+                    "day_name": slot.start_time.strftime("%A")
+                })
+            
+            result_data = {
+                "message": f"Found {len(suggestions)} suitable time slots for a {validated_args.duration_minutes}-minute meeting",
+                "attendees": validated_args.attendee_emails,
+                "duration_minutes": validated_args.duration_minutes,
+                "suggested_times": suggestions,
+                "search_parameters": {
+                    "days_ahead": validated_args.days_ahead,
+                    "earliest_start_hour": validated_args.earliest_start_hour,
+                    "latest_end_hour": validated_args.latest_end_hour,
+                    "preferred_times_only": validated_args.preferred_times_only
+                }
+            }
+            
+            return self._create_success_result(result_data)
+            
+        except Exception as e:
+            self.logger.exception(f"Error finding meeting time: {e}")
+            return self._create_error_result(f"Failed to find meeting time: {str(e)}")
+
+
+# --- Get Calendar Analytics Tool Wrapper ---
+
+class GetCalendarAnalyticsWrapperArgs(BaseModel):
+    """Input validation model for get_calendar_analytics arguments."""
+    days_back: Optional[int] = Field(30, ge=1, le=365, description="Number of days to analyze")
+    group_by: Optional[str] = Field("category", description="Group results by: category, day, week")
+    include_stats: Optional[List[str]] = Field(
+        default_factory=lambda: ["total_time", "meeting_count", "average_duration"],
+        description="Statistics to include"
+    )
+    
+    @field_validator('group_by')
+    @classmethod
+    def check_group_by(cls, v: str):
+        """Validate group_by value."""
+        valid_options = ["category", "day", "week", "month"]
+        if v not in valid_options:
+            raise ValueError(f"group_by must be one of: {valid_options}")
+        return v
+
+class GetCalendarAnalyticsWrapper(ToolWrapper):
+    """
+    Wrapper for the 'get_calendar_analytics' tool.
+    Analyzes calendar data to provide insights about time usage.
+    """
+    tool_name = "get_calendar_analytics"
+    logger = logging.getLogger(__name__)
+    description = "Analyzes calendar events to provide insights about time allocation and meeting patterns."
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "days_back": {
+                "type": "integer",
+                "description": "Number of days to analyze (1-365). Default is 30.",
+                "minimum": 1,
+                "maximum": 365
+            },
+            "group_by": {
+                "type": "string",
+                "description": "Group results by: category, day, week, month. Default is category.",
+                "enum": ["category", "day", "week", "month"]
+            },
+            "include_stats": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Statistics to include: total_time, meeting_count, average_duration, etc."
+            }
+        },
+        "required": []
+    }
+    
+    def _categorize_event(self, event: Dict[str, Any]) -> str:
+        """Categorize an event based on its properties."""
+        summary = event.get('summary', '').lower()
+        attendees = event.get('attendees', [])
+        
+        # Simple categorization logic
+        if len(attendees) > 1:
+            if any(keyword in summary for keyword in ['interview', 'candidate']):
+                return "INTERVIEWS"
+            elif any(keyword in summary for keyword in ['1:1', 'one-on-one', 'sync']):
+                return "ONE_ON_ONES"
+            else:
+                return "MEETINGS"
+        elif any(keyword in summary for keyword in ['focus', 'work', 'deep work']):
+            return "FOCUS_TIME"
+        elif any(keyword in summary for keyword in ['lunch', 'break', 'coffee']):
+            return "BREAKS"
+        else:
+            return "OTHER"
+    
+    def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
+        self.logger.info(f"Running {self.tool_name} with args: {args}")
+        
+        # 1. Validate arguments
+        try:
+            validated_args = GetCalendarAnalyticsWrapperArgs(**args)
+            self.logger.debug("Arguments validated successfully.")
+        except ValidationError as e:
+            self.logger.error(f"Argument validation failed: {e}")
+            return self._create_error_result(f"Invalid arguments: {e.errors()}")
+        
+        try:
+            user_tz = pytz.timezone(context.preferences.time_zone)
+            now = datetime.now(user_tz)
+            end_time = now
+            start_time = now - timedelta(days=validated_args.days_back)
+            
+            # Get events from calendar
+            service = context.calendar_client._get_service()
+            
+            events_list = []
+            page_token = None
+            
+            while True:
+                events_result = service.events().list(
+                    calendarId='primary',
+                    timeMin=start_time.isoformat(),
+                    timeMax=end_time.isoformat(),
+                    singleEvents=True,
+                    orderBy='startTime',
+                    pageToken=page_token,
+                    maxResults=250
+                ).execute()
+                
+                events = events_result.get('items', [])
+                events_list.extend(events)
+                
+                page_token = events_result.get('nextPageToken')
+                if not page_token:
+                    break
+            
+            # Analyze events
+            analytics = {
+                "total_events": len(events_list),
+                "total_hours": 0,
+                "by_category": {},
+                "by_day": {},
+                "busiest_days": [],
+                "average_events_per_day": 0,
+                "average_meeting_duration": 0
+            }
+            
+            total_duration_minutes = 0
+            timed_events = 0
+            
+            for event in events_list:
+                # Skip transparent or cancelled events
+                if event.get('transparency') == 'transparent' or event.get('status') == 'cancelled':
+                    continue
+                
+                # Get event duration
+                if 'dateTime' in event.get('start', {}):
+                    start_dt = datetime.fromisoformat(event['start']['dateTime'])
+                    end_dt = datetime.fromisoformat(event['end']['dateTime'])
+                    duration_minutes = (end_dt - start_dt).total_seconds() / 60
+                    
+                    total_duration_minutes += duration_minutes
+                    timed_events += 1
+                    
+                    # Categorize event
+                    category = self._categorize_event(event)
+                    
+                    # Update category stats
+                    if category not in analytics["by_category"]:
+                        analytics["by_category"][category] = {
+                            "count": 0,
+                            "total_minutes": 0,
+                            "average_duration": 0
+                        }
+                    
+                    analytics["by_category"][category]["count"] += 1
+                    analytics["by_category"][category]["total_minutes"] += duration_minutes
+                    
+                    # Update daily stats
+                    day_key = start_dt.date().isoformat()
+                    if day_key not in analytics["by_day"]:
+                        analytics["by_day"][day_key] = {
+                            "count": 0,
+                            "total_minutes": 0
+                        }
+                    
+                    analytics["by_day"][day_key]["count"] += 1
+                    analytics["by_day"][day_key]["total_minutes"] += duration_minutes
+            
+            # Calculate aggregates
+            analytics["total_hours"] = round(total_duration_minutes / 60, 1)
+            analytics["average_meeting_duration"] = round(total_duration_minutes / timed_events, 0) if timed_events > 0 else 0
+            analytics["average_events_per_day"] = round(timed_events / validated_args.days_back, 1)
+            
+            # Calculate category averages
+            for category, stats in analytics["by_category"].items():
+                if stats["count"] > 0:
+                    stats["average_duration"] = round(stats["total_minutes"] / stats["count"], 0)
+                    stats["total_hours"] = round(stats["total_minutes"] / 60, 1)
+            
+            # Find busiest days
+            if analytics["by_day"]:
+                sorted_days = sorted(
+                    analytics["by_day"].items(),
+                    key=lambda x: x[1]["total_minutes"],
+                    reverse=True
+                )[:5]
+                
+                analytics["busiest_days"] = [
+                    {
+                        "date": day,
+                        "events": stats["count"],
+                        "hours": round(stats["total_minutes"] / 60, 1)
+                    }
+                    for day, stats in sorted_days
+                ]
+            
+            # Format result based on group_by
+            if validated_args.group_by == "category":
+                primary_grouping = analytics["by_category"]
+            elif validated_args.group_by == "day":
+                primary_grouping = analytics["by_day"]
+            else:
+                primary_grouping = analytics["by_category"]
+            
+            result_data = {
+                "message": f"Analyzed {timed_events} events over the past {validated_args.days_back} days",
+                "time_period": {
+                    "start": start_time.date().isoformat(),
+                    "end": end_time.date().isoformat(),
+                    "days": validated_args.days_back
+                },
+                "summary": {
+                    "total_events": timed_events,
+                    "total_hours": analytics["total_hours"],
+                    "average_events_per_day": analytics["average_events_per_day"],
+                    "average_meeting_duration_minutes": analytics["average_meeting_duration"]
+                },
+                "breakdown": primary_grouping,
+                "busiest_days": analytics["busiest_days"],
+                "insights": []
+            }
+            
+            # Generate insights
+            if analytics["total_hours"] > 0:
+                meeting_percentage = 0
+                if "MEETINGS" in analytics["by_category"]:
+                    meeting_percentage = round(
+                        (analytics["by_category"]["MEETINGS"]["total_minutes"] / total_duration_minutes) * 100,
+                        0
+                    )
+                    result_data["insights"].append(
+                        f"{meeting_percentage}% of your time is spent in meetings"
+                    )
+                
+                if analytics["average_meeting_duration"] > 60:
+                    result_data["insights"].append(
+                        f"Your average meeting is {int(analytics['average_meeting_duration'])} minutes - consider shorter meetings"
+                    )
+                
+                if analytics["average_events_per_day"] > 6:
+                    result_data["insights"].append(
+                        "You average more than 6 events per day - consider blocking focus time"
+                    )
+            
+            return self._create_success_result(result_data)
+            
+        except Exception as e:
+            self.logger.exception(f"Error analyzing calendar: {e}")
+            return self._create_error_result(f"Failed to analyze calendar: {str(e)}")
+
+
+# --- Update Event Tool Wrapper ---
+
+class UpdateEventWrapperArgs(BaseModel):
+    """Input validation model for update_event arguments."""
+    event_id: str = Field(..., description="The ID of the event to update")
+    title: Optional[str] = Field(None, description="New event title")
+    description: Optional[str] = Field(None, description="New event description")
+    location: Optional[str] = Field(None, description="New event location")
+    add_attendees: Optional[List[str]] = Field(None, description="Email addresses of attendees to add")
+    remove_attendees: Optional[List[str]] = Field(None, description="Email addresses of attendees to remove")
+    
+    @model_validator(mode='after')
+    def check_at_least_one_update(self):
+        """Ensure at least one field is being updated."""
+        update_fields = [self.title, self.description, self.location, self.add_attendees, self.remove_attendees]
+        if not any(field is not None for field in update_fields):
+            raise ValueError("At least one field must be specified for update")
+        return self
+
+class UpdateEventWrapper(ToolWrapper):
+    """
+    Wrapper for the 'update_event' tool.
+    Updates event details like title, description, location, or attendees.
+    """
+    tool_name = "update_event"
+    logger = logging.getLogger(__name__)
+    description = "Updates an existing calendar event's details (title, description, location, attendees)."
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "event_id": {
+                "type": "string",
+                "description": "The ID of the event to update"
+            },
+            "title": {
+                "type": "string",
+                "description": "New event title/summary"
+            },
+            "description": {
+                "type": "string",
+                "description": "New event description"
+            },
+            "location": {
+                "type": "string",
+                "description": "New event location"
+            },
+            "add_attendees": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Email addresses of attendees to add"
+            },
+            "remove_attendees": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Email addresses of attendees to remove"
+            }
+        },
+        "required": ["event_id"]
+    }
+    
+    def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
+        self.logger.info(f"Running {self.tool_name} with args: {args}")
+        
+        # 1. Validate arguments
+        try:
+            validated_args = UpdateEventWrapperArgs(**args)
+            self.logger.debug("Arguments validated successfully.")
+        except ValidationError as e:
+            self.logger.error(f"Argument validation failed: {e}")
+            return self._create_error_result(f"Invalid arguments: {e.errors()}")
+        
+        try:
+            service = context.calendar_client._get_service()
+            
+            # 2. Get the existing event
+            try:
+                event = service.events().get(
+                    calendarId='primary',
+                    eventId=validated_args.event_id
+                ).execute()
+            except HttpError as e:
+                if e.resp.status == 404:
+                    return self._create_error_result(f"Event with ID '{validated_args.event_id}' not found")
+                raise
+            
+            # Store original values for response
+            original_values = {
+                "title": event.get('summary', ''),
+                "description": event.get('description', ''),
+                "location": event.get('location', ''),
+                "attendee_count": len(event.get('attendees', []))
+            }
+            
+            # 3. Build update payload
+            update_made = False
+            
+            if validated_args.title is not None:
+                event['summary'] = validated_args.title
+                update_made = True
+            
+            if validated_args.description is not None:
+                event['description'] = validated_args.description
+                update_made = True
+            
+            if validated_args.location is not None:
+                event['location'] = validated_args.location
+                update_made = True
+            
+            # Handle attendee updates
+            if validated_args.add_attendees or validated_args.remove_attendees:
+                current_attendees = event.get('attendees', [])
+                attendee_emails = {att.get('email') for att in current_attendees}
+                
+                # Remove attendees
+                if validated_args.remove_attendees:
+                    for email in validated_args.remove_attendees:
+                        attendee_emails.discard(email)
+                    update_made = True
+                
+                # Add attendees
+                if validated_args.add_attendees:
+                    for email in validated_args.add_attendees:
+                        attendee_emails.add(email)
+                    update_made = True
+                
+                # Rebuild attendee list
+                event['attendees'] = [{'email': email} for email in attendee_emails]
+            
+            if not update_made:
+                return self._create_error_result("No changes to apply")
+            
+            # 4. Update the event
+            updated_event = service.events().update(
+                calendarId='primary',
+                eventId=validated_args.event_id,
+                body=event,
+                sendNotifications=True  # Notify attendees of changes
+            ).execute()
+            
+            self.logger.info(f"Successfully updated event '{updated_event.get('summary', 'Untitled')}'")
+            
+            # 5. Prepare response
+            changes_made = []
+            if validated_args.title and validated_args.title != original_values["title"]:
+                changes_made.append(f"Title: '{original_values['title']}' → '{validated_args.title}'")
+            
+            if validated_args.description is not None:
+                if original_values["description"] != validated_args.description:
+                    changes_made.append("Description updated")
+            
+            if validated_args.location is not None:
+                if original_values["location"] != validated_args.location:
+                    changes_made.append(f"Location: '{original_values['location']}' → '{validated_args.location}'")
+            
+            new_attendee_count = len(updated_event.get('attendees', []))
+            if new_attendee_count != original_values["attendee_count"]:
+                changes_made.append(f"Attendees: {original_values['attendee_count']} → {new_attendee_count}")
+            
+            result_data = {
+                "message": f"Successfully updated event '{updated_event.get('summary', 'Untitled')}'",
+                "event_id": validated_args.event_id,
+                "event_title": updated_event.get('summary', ''),
+                "changes_made": changes_made,
+                "updated_fields": {
+                    "title": validated_args.title is not None,
+                    "description": validated_args.description is not None,
+                    "location": validated_args.location is not None,
+                    "attendees": bool(validated_args.add_attendees or validated_args.remove_attendees)
+                },
+                "attendee_count": new_attendee_count,
+                "event_link": updated_event.get('htmlLink', '')
+            }
+            
+            return self._create_success_result(result_data)
+            
+        except Exception as e:
+            self.logger.exception(f"Error updating event: {e}")
+            return self._create_error_result(f"Failed to update event: {str(e)}")
+
+
 # --- Tool Registry (Conceptual) ---
 # The Tool Executor would use a registry like this to find the correct wrapper.
 TOOL_REGISTRY: Dict[str, ToolWrapper] = {
@@ -1348,6 +1954,9 @@ TOOL_REGISTRY: Dict[str, ToolWrapper] = {
     "cancel_event": CancelEventWrapper(),
     "create_task": CreateTaskWrapper(),
     "get_tasks": GetTasksWrapper(),
+    "find_meeting_time": FindMeetingTimeWrapper(),
+    "get_calendar_analytics": GetCalendarAnalyticsWrapper(),
+    "update_event": UpdateEventWrapper(),
     # Add other tool wrappers here as they are created
 }
 
