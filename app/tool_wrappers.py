@@ -15,7 +15,7 @@ try:
     # Interfaces from Task 5
     from tool_interface import ExecutionContext, ExecutorToolResult, ToolResultStatus
     # Core models from Task 1
-    from models import WantToDoActivity, TimeSlot, ActivityCategory, UserPreferences, DayOfWeek, EnergyLevel
+    from models import WantToDoActivity, TimeSlot, ActivityCategory, ActivityStatus, UserPreferences, DayOfWeek, EnergyLevel
     # Core logic functions (conceptual imports)
     from scheduler_logic import schedule_want_to_do_basic, ConflictInfo # Need ConflictInfo if handling conflicts here
     # Calendar client interface (needed from context)
@@ -759,12 +759,593 @@ class GetAvailableSlotsWrapper(ToolWrapper):
             return self._create_error_result(f"Failed to retrieve available slots: {str(e)}")
 
 
+# --- Reschedule Event Tool Wrapper ---
+
+class RescheduleEventWrapperArgs(BaseModel):
+    """Input validation model for reschedule_event arguments."""
+    event_id: str = Field(..., description="The ID of the event to reschedule")
+    new_start_time_str: str = Field(..., description="New start time in timezone-aware format")
+    new_end_time_str: Optional[str] = Field(None, description="New end time in timezone-aware format")
+    new_duration_minutes: Optional[int] = Field(None, gt=0, description="New duration in minutes (alternative to end_time)")
+    check_conflicts: Optional[bool] = Field(True, description="Whether to check for conflicts before rescheduling")
+    
+    @model_validator(mode='after')
+    def check_time_specification(self):
+        """Ensure either end_time or duration is provided."""
+        if not self.new_end_time_str and not self.new_duration_minutes:
+            raise ValueError("Either new_end_time_str or new_duration_minutes must be provided")
+        return self
+
+class RescheduleEventWrapper(ToolWrapper):
+    """
+    Wrapper for the 'reschedule_event' tool.
+    Reschedules an existing calendar event to a new time.
+    """
+    tool_name = "reschedule_event"
+    logger = logging.getLogger(__name__)
+    description = "Reschedules an existing calendar event to a new time, with optional conflict checking."
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "event_id": {
+                "type": "string",
+                "description": "The ID of the event to reschedule"
+            },
+            "new_start_time_str": {
+                "type": "string",
+                "description": "New start time in timezone-aware format (e.g., '2025-05-10T14:00:00+02:00')"
+            },
+            "new_end_time_str": {
+                "type": "string",
+                "description": "New end time in timezone-aware format"
+            },
+            "new_duration_minutes": {
+                "type": "integer",
+                "description": "New duration in minutes (alternative to end_time)",
+                "minimum": 1
+            },
+            "check_conflicts": {
+                "type": "boolean",
+                "description": "Whether to check for conflicts before rescheduling. Default is true."
+            }
+        },
+        "required": ["event_id", "new_start_time_str"]
+    }
+    
+    def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
+        self.logger.info(f"Running {self.tool_name} with args: {args}")
+        
+        # 1. Validate arguments
+        try:
+            validated_args = RescheduleEventWrapperArgs(**args)
+            self.logger.debug("Arguments validated successfully.")
+        except ValidationError as e:
+            self.logger.error(f"Argument validation failed: {e}")
+            return self._create_clarification_result(
+                f"Invalid arguments for rescheduling: {e.errors()}",
+                result_data={"validation_errors": e.errors()}
+            )
+        
+        # 2. Parse datetime
+        try:
+            user_tz = pytz.timezone(context.preferences.time_zone)
+        except Exception as e:
+            self.logger.error(f"Invalid timezone: {context.preferences.time_zone}")
+            return self._create_error_result(f"Invalid timezone configuration: {context.preferences.time_zone}")
+        
+        new_start = parse_datetime_flexible(validated_args.new_start_time_str, user_tz)
+        if not new_start:
+            return self._create_error_result("Could not parse new start time")
+        
+        # Calculate new end time
+        if validated_args.new_end_time_str:
+            new_end = parse_datetime_flexible(validated_args.new_end_time_str, user_tz)
+            if not new_end:
+                return self._create_error_result("Could not parse new end time")
+        else:
+            new_end = new_start + timedelta(minutes=validated_args.new_duration_minutes)
+        
+        if new_end <= new_start:
+            return self._create_error_result("End time must be after start time")
+        
+        try:
+            service = context.calendar_client._get_service()
+            
+            # 3. Get the existing event
+            try:
+                existing_event = service.events().get(
+                    calendarId='primary',
+                    eventId=validated_args.event_id
+                ).execute()
+            except HttpError as e:
+                if e.resp.status == 404:
+                    return self._create_error_result(f"Event with ID '{validated_args.event_id}' not found")
+                raise
+            
+            # 4. Check for conflicts if requested
+            if validated_args.check_conflicts:
+                # Check for conflicts in the new time slot
+                check_start = new_start + timedelta(microseconds=1)
+                check_end = new_end - timedelta(microseconds=1)
+                
+                conflicting_events = context.calendar_client.get_busy_slots(
+                    calendar_id='primary',
+                    start_time=check_start,
+                    end_time=check_end
+                )
+                
+                # Filter out the current event from conflicts
+                conflicting_events = [
+                    event for event in conflicting_events 
+                    if not hasattr(event, 'event_id') or event.event_id != validated_args.event_id
+                ]
+                
+                if conflicting_events:
+                    conflict_count = len(conflicting_events)
+                    return self._create_error_result(
+                        f"Cannot reschedule: {conflict_count} conflict(s) found at the new time",
+                        result_data={"conflicts": conflict_count}
+                    )
+            
+            # 5. Update the event
+            event_update = {
+                'start': {
+                    'dateTime': new_start.isoformat(),
+                    'timeZone': str(user_tz)
+                },
+                'end': {
+                    'dateTime': new_end.isoformat(),
+                    'timeZone': str(user_tz)
+                }
+            }
+            
+            updated_event = service.events().patch(
+                calendarId='primary',
+                eventId=validated_args.event_id,
+                body=event_update
+            ).execute()
+            
+            self.logger.info(f"Successfully rescheduled event '{existing_event.get('summary', 'Untitled')}'")
+            
+            return self._create_success_result({
+                "message": f"Successfully rescheduled '{existing_event.get('summary', 'Untitled Event')}'",
+                "event_id": validated_args.event_id,
+                "event_title": existing_event.get('summary', 'Untitled Event'),
+                "old_start": existing_event['start'].get('dateTime', existing_event['start'].get('date')),
+                "old_end": existing_event['end'].get('dateTime', existing_event['end'].get('date')),
+                "new_start": new_start.isoformat(),
+                "new_end": new_end.isoformat(),
+                "duration_minutes": int((new_end - new_start).total_seconds() / 60)
+            })
+            
+        except Exception as e:
+            self.logger.exception(f"Error rescheduling event: {e}")
+            return self._create_error_result(f"Failed to reschedule event: {str(e)}")
+
+
+# --- Cancel Event Tool Wrapper ---
+
+class CancelEventWrapperArgs(BaseModel):
+    """Input validation model for cancel_event arguments."""
+    event_id: str = Field(..., description="The ID of the event to cancel")
+    send_notifications: Optional[bool] = Field(True, description="Whether to send cancellation notifications")
+    reason: Optional[str] = Field(None, description="Optional reason for cancellation")
+
+class CancelEventWrapper(ToolWrapper):
+    """
+    Wrapper for the 'cancel_event' tool.
+    Cancels/deletes a calendar event.
+    """
+    tool_name = "cancel_event"
+    logger = logging.getLogger(__name__)
+    description = "Cancels or deletes a calendar event, with optional notifications to attendees."
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "event_id": {
+                "type": "string",
+                "description": "The ID of the event to cancel"
+            },
+            "send_notifications": {
+                "type": "boolean",
+                "description": "Whether to send cancellation notifications. Default is true."
+            },
+            "reason": {
+                "type": "string",
+                "description": "Optional reason for cancellation"
+            }
+        },
+        "required": ["event_id"]
+    }
+    
+    def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
+        self.logger.info(f"Running {self.tool_name} with args: {args}")
+        
+        # 1. Validate arguments
+        try:
+            validated_args = CancelEventWrapperArgs(**args)
+            self.logger.debug("Arguments validated successfully.")
+        except ValidationError as e:
+            self.logger.error(f"Argument validation failed: {e}")
+            return self._create_error_result(f"Invalid arguments for cancellation: {e.errors()}")
+        
+        try:
+            service = context.calendar_client._get_service()
+            
+            # 2. Get the event details before deletion
+            try:
+                event = service.events().get(
+                    calendarId='primary',
+                    eventId=validated_args.event_id
+                ).execute()
+            except HttpError as e:
+                if e.resp.status == 404:
+                    return self._create_error_result(f"Event with ID '{validated_args.event_id}' not found")
+                raise
+            
+            event_title = event.get('summary', 'Untitled Event')
+            event_start = event['start'].get('dateTime', event['start'].get('date'))
+            attendee_count = len(event.get('attendees', []))
+            
+            # 3. Delete the event
+            service.events().delete(
+                calendarId='primary',
+                eventId=validated_args.event_id,
+                sendNotifications=validated_args.send_notifications
+            ).execute()
+            
+            self.logger.info(f"Successfully cancelled event '{event_title}'")
+            
+            result_data = {
+                "message": f"Successfully cancelled '{event_title}'",
+                "event_id": validated_args.event_id,
+                "event_title": event_title,
+                "event_start": event_start,
+                "attendee_count": attendee_count,
+                "notifications_sent": validated_args.send_notifications
+            }
+            
+            if validated_args.reason:
+                result_data["cancellation_reason"] = validated_args.reason
+            
+            return self._create_success_result(result_data)
+            
+        except Exception as e:
+            self.logger.exception(f"Error cancelling event: {e}")
+            return self._create_error_result(f"Failed to cancel event: {str(e)}")
+
+
+# --- Create Task Tool Wrapper ---
+
+class CreateTaskWrapperArgs(BaseModel):
+    """Input validation model for create_task arguments."""
+    title: str = Field(..., description="The title of the task")
+    description: Optional[str] = Field(None, description="Task description")
+    category_str: str = Field(..., description="Task category (e.g., 'WORK', 'PERSONAL')")
+    priority: Optional[int] = Field(5, ge=1, le=10, description="Priority (1-10)")
+    deadline_str: Optional[str] = Field(None, description="Optional deadline")
+    estimated_duration_minutes: Optional[int] = Field(60, gt=0, description="Estimated duration in minutes")
+    
+    @field_validator('category_str')
+    @classmethod
+    def check_category(cls, v: str):
+        """Validate category string matches enum values."""
+        if v.upper() not in ActivityCategory.__members__:
+            raise ValueError(f"Invalid category. Choose from: {list(ActivityCategory.__members__.keys())}")
+        return v
+
+class CreateTaskWrapper(ToolWrapper):
+    """
+    Wrapper for the 'create_task' tool.
+    Creates a new task in the user's WantToDo list.
+    """
+    tool_name = "create_task"
+    logger = logging.getLogger(__name__)
+    description = "Creates a new task or to-do item with specified details and priority."
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "The title of the task"
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional task description"
+            },
+            "category_str": {
+                "type": "string",
+                "description": "Task category (WORK, PERSONAL, LEARNING, EXERCISE, SOCIAL, CHORE, ERRAND, FUN, OTHER)"
+            },
+            "priority": {
+                "type": "integer",
+                "description": "Priority level (1-10, higher is more important). Default is 5.",
+                "minimum": 1,
+                "maximum": 10
+            },
+            "deadline_str": {
+                "type": "string",
+                "description": "Optional deadline in timezone-aware format"
+            },
+            "estimated_duration_minutes": {
+                "type": "integer",
+                "description": "Estimated duration in minutes. Default is 60.",
+                "minimum": 1
+            }
+        },
+        "required": ["title", "category_str"]
+    }
+    
+    def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
+        self.logger.info(f"Running {self.tool_name} with args: {args}")
+        
+        # 1. Validate arguments
+        try:
+            validated_args = CreateTaskWrapperArgs(**args)
+            self.logger.debug("Arguments validated successfully.")
+        except ValidationError as e:
+            self.logger.error(f"Argument validation failed: {e}")
+            return self._create_clarification_result(
+                f"Invalid task details: {e.errors()}",
+                result_data={"validation_errors": e.errors()}
+            )
+        
+        # 2. Parse deadline if provided
+        deadline = None
+        if validated_args.deadline_str:
+            try:
+                user_tz = pytz.timezone(context.preferences.time_zone)
+                deadline = parse_datetime_flexible(validated_args.deadline_str, user_tz)
+                if not deadline:
+                    return self._create_error_result("Could not parse deadline")
+            except Exception as e:
+                self.logger.error(f"Error parsing deadline: {e}")
+                return self._create_error_result(f"Invalid deadline format: {validated_args.deadline_str}")
+        
+        # 3. Create WantToDoActivity
+        try:
+            task = WantToDoActivity(
+                title=validated_args.title,
+                description=validated_args.description,
+                estimated_duration=timedelta(minutes=validated_args.estimated_duration_minutes),
+                priority=validated_args.priority,
+                category=ActivityCategory(validated_args.category_str.upper()),
+                deadline=deadline,
+                status=ActivityStatus.TODO
+            )
+            
+            # TODO: In a real implementation, save the task to database/storage
+            # For now, we'll just return success with the task details
+            
+            self.logger.info(f"Successfully created task '{task.title}' with ID {task.id}")
+            
+            result_data = {
+                "message": f"Successfully created task '{task.title}'",
+                "task_id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "category": task.category.value,
+                "priority": task.priority,
+                "estimated_duration_minutes": validated_args.estimated_duration_minutes,
+                "status": task.status.value
+            }
+            
+            if deadline:
+                result_data["deadline"] = deadline.isoformat()
+            
+            return self._create_success_result(result_data)
+            
+        except Exception as e:
+            self.logger.exception(f"Error creating task: {e}")
+            return self._create_error_result(f"Failed to create task: {str(e)}")
+
+
+# --- Get Tasks Tool Wrapper ---
+
+class GetTasksWrapperArgs(BaseModel):
+    """Input validation model for get_tasks arguments."""
+    category_str: Optional[str] = Field(None, description="Filter by category")
+    priority_min: Optional[int] = Field(None, ge=1, le=10, description="Minimum priority")
+    status_str: Optional[str] = Field(None, description="Filter by status (TODO, SCHEDULED, DONE)")
+    due_before_str: Optional[str] = Field(None, description="Show tasks due before this date")
+    limit: Optional[int] = Field(50, ge=1, le=100, description="Maximum number of tasks to return")
+    
+    @field_validator('category_str')
+    @classmethod
+    def check_category(cls, v: Optional[str]):
+        """Validate category if provided."""
+        if v and v.upper() not in ActivityCategory.__members__:
+            raise ValueError(f"Invalid category. Choose from: {list(ActivityCategory.__members__.keys())}")
+        return v
+    
+    @field_validator('status_str')
+    @classmethod
+    def check_status(cls, v: Optional[str]):
+        """Validate status if provided."""
+        if v and v.upper() not in ActivityStatus.__members__:
+            raise ValueError(f"Invalid status. Choose from: {list(ActivityStatus.__members__.keys())}")
+        return v
+
+class GetTasksWrapper(ToolWrapper):
+    """
+    Wrapper for the 'get_tasks' tool.
+    Retrieves tasks from the user's WantToDo list with optional filters.
+    """
+    tool_name = "get_tasks"
+    logger = logging.getLogger(__name__)
+    description = "Retrieves pending tasks or to-do items with optional filtering by category, priority, or deadline."
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "category_str": {
+                "type": "string",
+                "description": "Filter by category (WORK, PERSONAL, LEARNING, etc.)"
+            },
+            "priority_min": {
+                "type": "integer",
+                "description": "Show only tasks with priority >= this value (1-10)",
+                "minimum": 1,
+                "maximum": 10
+            },
+            "status_str": {
+                "type": "string",
+                "description": "Filter by status (TODO, SCHEDULED, DONE)"
+            },
+            "due_before_str": {
+                "type": "string",
+                "description": "Show only tasks due before this date"
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of tasks to return (1-100). Default is 50.",
+                "minimum": 1,
+                "maximum": 100
+            }
+        },
+        "required": []
+    }
+    
+    def run(self, args: Dict[str, Any], context: ExecutionContext) -> ExecutorToolResult:
+        self.logger.info(f"Running {self.tool_name} with args: {args}")
+        
+        # 1. Validate arguments
+        try:
+            validated_args = GetTasksWrapperArgs(**args)
+            self.logger.debug("Arguments validated successfully.")
+        except ValidationError as e:
+            self.logger.error(f"Argument validation failed: {e}")
+            return self._create_error_result(f"Invalid filter parameters: {e.errors()}")
+        
+        # 2. Parse due_before date if provided
+        due_before = None
+        if validated_args.due_before_str:
+            try:
+                user_tz = pytz.timezone(context.preferences.time_zone)
+                due_before = parse_datetime_flexible(validated_args.due_before_str, user_tz)
+                if not due_before:
+                    return self._create_error_result("Could not parse due_before date")
+            except Exception:
+                return self._create_error_result(f"Invalid date format: {validated_args.due_before_str}")
+        
+        try:
+            # TODO: In a real implementation, fetch tasks from database/storage
+            # For demonstration, create some dummy tasks
+            dummy_tasks = [
+                WantToDoActivity(
+                    title="Complete quarterly report",
+                    description="Finish Q1 2025 financial report",
+                    estimated_duration=timedelta(hours=3),
+                    priority=8,
+                    category=ActivityCategory.WORK,
+                    deadline=datetime.now(pytz.timezone(context.preferences.time_zone)) + timedelta(days=3),
+                    status=ActivityStatus.TODO
+                ),
+                WantToDoActivity(
+                    title="Team meeting preparation",
+                    description="Prepare slides for Monday meeting",
+                    estimated_duration=timedelta(hours=1),
+                    priority=7,
+                    category=ActivityCategory.WORK,
+                    status=ActivityStatus.TODO
+                ),
+                WantToDoActivity(
+                    title="Grocery shopping",
+                    description="Buy groceries for the week",
+                    estimated_duration=timedelta(hours=1.5),
+                    priority=5,
+                    category=ActivityCategory.ERRAND,
+                    status=ActivityStatus.TODO
+                ),
+                WantToDoActivity(
+                    title="Gym workout",
+                    description="Upper body strength training",
+                    estimated_duration=timedelta(hours=1),
+                    priority=6,
+                    category=ActivityCategory.EXERCISE,
+                    status=ActivityStatus.SCHEDULED
+                )
+            ]
+            
+            # 3. Apply filters
+            filtered_tasks = dummy_tasks
+            
+            if validated_args.category_str:
+                category_filter = ActivityCategory(validated_args.category_str.upper())
+                filtered_tasks = [t for t in filtered_tasks if t.category == category_filter]
+            
+            if validated_args.priority_min:
+                filtered_tasks = [t for t in filtered_tasks if t.priority >= validated_args.priority_min]
+            
+            if validated_args.status_str:
+                status_filter = ActivityStatus(validated_args.status_str.upper())
+                filtered_tasks = [t for t in filtered_tasks if t.status == status_filter]
+            
+            if due_before:
+                filtered_tasks = [t for t in filtered_tasks if t.deadline and t.deadline <= due_before]
+            
+            # Sort by priority (descending) and deadline
+            filtered_tasks.sort(key=lambda t: (
+                -t.priority,
+                t.deadline.timestamp() if t.deadline else float('inf')
+            ))
+            
+            # Apply limit
+            filtered_tasks = filtered_tasks[:validated_args.limit]
+            
+            # 4. Format response
+            tasks_data = []
+            for task in filtered_tasks:
+                task_info = {
+                    "task_id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "category": task.category.value,
+                    "priority": task.priority,
+                    "status": task.status.value,
+                    "estimated_duration_minutes": int(task.estimated_duration.total_seconds() / 60)
+                }
+                if task.deadline:
+                    task_info["deadline"] = task.deadline.isoformat()
+                    task_info["deadline_human"] = task.deadline.strftime("%A, %B %d at %I:%M %p")
+                
+                tasks_data.append(task_info)
+            
+            # Group by status for summary
+            status_counts = {}
+            for task in filtered_tasks:
+                status = task.status.value
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            result_data = {
+                "message": f"Found {len(filtered_tasks)} task(s) matching your criteria",
+                "task_count": len(filtered_tasks),
+                "status_summary": status_counts,
+                "tasks": tasks_data,
+                "filters_applied": {
+                    "category": validated_args.category_str,
+                    "priority_min": validated_args.priority_min,
+                    "status": validated_args.status_str,
+                    "due_before": due_before.isoformat() if due_before else None
+                }
+            }
+            
+            return self._create_success_result(result_data)
+            
+        except Exception as e:
+            self.logger.exception(f"Error retrieving tasks: {e}")
+            return self._create_error_result(f"Failed to retrieve tasks: {str(e)}")
+
+
 # --- Tool Registry (Conceptual) ---
 # The Tool Executor would use a registry like this to find the correct wrapper.
 TOOL_REGISTRY: Dict[str, ToolWrapper] = {
     "schedule_activity": ScheduleActivityWrapper(),
     "get_calendar_events": GetCalendarEventsWrapper(),
     "get_available_slots": GetAvailableSlotsWrapper(),
+    "reschedule_event": RescheduleEventWrapper(),
+    "cancel_event": CancelEventWrapper(),
+    "create_task": CreateTaskWrapper(),
+    "get_tasks": GetTasksWrapper(),
     # Add other tool wrappers here as they are created
 }
 

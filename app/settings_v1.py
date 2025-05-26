@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     DYNAMODB_USER_TOKENS_TABLE_NAME: str = "UserGoogleTokens"
     DYNAMODB_CHAT_SESSIONS_TABLE_NAME: str = "ChatSessions"
     DYNAMODB_USER_PREFERENCES_TABLE_NAME: str = "UserPreferences"
+    DYNAMODB_USER_TASKS_TABLE_NAME: str = "UserTasks"
     AWS_DYNAMODB_ENDPOINT_URL: Optional[str] = None  # Optional for local development/testing
 
     # ENCRYPTION_KEY must be a 32-byte (256-bit) key.
