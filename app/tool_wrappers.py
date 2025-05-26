@@ -1102,7 +1102,7 @@ class CreateTaskWrapper(ToolWrapper):
                 self.logger.error(f"Error parsing deadline: {e}")
                 return self._create_error_result(f"Invalid deadline format: {validated_args.deadline_str}")
         
-        # 3. Create WantToDoActivity
+        # 3. Create WantToDoActivity and save to DynamoDB
         try:
             task = WantToDoActivity(
                 title=validated_args.title,
@@ -1114,10 +1114,33 @@ class CreateTaskWrapper(ToolWrapper):
                 status=ActivityStatus.TODO
             )
             
-            # TODO: In a real implementation, save the task to database/storage
-            # For now, we'll just return success with the task details
+            # Import DynamoDB operations
+            from dynamodb import save_user_task
             
-            self.logger.info(f"Successfully created task '{task.title}' with ID {task.id}")
+            # Prepare task data for DynamoDB
+            task_data = {
+                'task_id': task.id,
+                'title': task.title,
+                'description': task.description or '',
+                'category': task.category.value,
+                'priority': task.priority,
+                'status': task.status.value,
+                'estimated_duration_minutes': validated_args.estimated_duration_minutes
+            }
+            
+            # Add deadline if present
+            if deadline:
+                task_data['deadline'] = deadline.isoformat()
+                task_data['deadline_timestamp'] = int(deadline.timestamp())
+            
+            # Save to DynamoDB
+            save_result = save_user_task(context.user_id, task_data)
+            
+            if save_result != "success":
+                self.logger.error(f"Failed to save task to DynamoDB: {save_result}")
+                return self._create_error_result(f"Failed to save task: {save_result}")
+            
+            self.logger.info(f"Successfully created and saved task '{task.title}' with ID {task.id}")
             
             result_data = {
                 "message": f"Successfully created task '{task.title}'",
@@ -1228,97 +1251,76 @@ class GetTasksWrapper(ToolWrapper):
                 return self._create_error_result(f"Invalid date format: {validated_args.due_before_str}")
         
         try:
-            # TODO: In a real implementation, fetch tasks from database/storage
-            # For demonstration, create some dummy tasks
-            dummy_tasks = [
-                WantToDoActivity(
-                    title="Complete quarterly report",
-                    description="Finish Q1 2025 financial report",
-                    estimated_duration=timedelta(hours=3),
-                    priority=8,
-                    category=ActivityCategory.WORK,
-                    deadline=datetime.now(pytz.timezone(context.preferences.time_zone)) + timedelta(days=3),
-                    status=ActivityStatus.TODO
-                ),
-                WantToDoActivity(
-                    title="Team meeting preparation",
-                    description="Prepare slides for Monday meeting",
-                    estimated_duration=timedelta(hours=1),
-                    priority=7,
-                    category=ActivityCategory.WORK,
-                    status=ActivityStatus.TODO
-                ),
-                WantToDoActivity(
-                    title="Grocery shopping",
-                    description="Buy groceries for the week",
-                    estimated_duration=timedelta(hours=1.5),
-                    priority=5,
-                    category=ActivityCategory.ERRAND,
-                    status=ActivityStatus.TODO
-                ),
-                WantToDoActivity(
-                    title="Gym workout",
-                    description="Upper body strength training",
-                    estimated_duration=timedelta(hours=1),
-                    priority=6,
-                    category=ActivityCategory.EXERCISE,
-                    status=ActivityStatus.SCHEDULED
-                )
-            ]
+            # Import DynamoDB operations
+            from dynamodb import get_user_tasks
             
-            # 3. Apply filters
-            filtered_tasks = dummy_tasks
+            # Prepare filters for DynamoDB query
+            filters = {}
             
             if validated_args.category_str:
-                category_filter = ActivityCategory(validated_args.category_str.upper())
-                filtered_tasks = [t for t in filtered_tasks if t.category == category_filter]
+                filters['category'] = validated_args.category_str.upper()
             
             if validated_args.priority_min:
-                filtered_tasks = [t for t in filtered_tasks if t.priority >= validated_args.priority_min]
+                filters['priority_min'] = validated_args.priority_min
             
             if validated_args.status_str:
-                status_filter = ActivityStatus(validated_args.status_str.upper())
-                filtered_tasks = [t for t in filtered_tasks if t.status == status_filter]
+                filters['status'] = validated_args.status_str.upper()
             
             if due_before:
-                filtered_tasks = [t for t in filtered_tasks if t.deadline and t.deadline <= due_before]
+                filters['due_before'] = int(due_before.timestamp())
+            
+            # Fetch tasks from DynamoDB
+            db_tasks = get_user_tasks(context.user_id, filters)
             
             # Sort by priority (descending) and deadline
-            filtered_tasks.sort(key=lambda t: (
-                -t.priority,
-                t.deadline.timestamp() if t.deadline else float('inf')
+            db_tasks.sort(key=lambda t: (
+                -t.get('priority', 0),
+                t.get('deadline_timestamp', float('inf'))
             ))
             
             # Apply limit
-            filtered_tasks = filtered_tasks[:validated_args.limit]
+            db_tasks = db_tasks[:validated_args.limit]
             
             # 4. Format response
             tasks_data = []
-            for task in filtered_tasks:
+            for task in db_tasks:
                 task_info = {
-                    "task_id": task.id,
-                    "title": task.title,
-                    "description": task.description,
-                    "category": task.category.value,
-                    "priority": task.priority,
-                    "status": task.status.value,
-                    "estimated_duration_minutes": int(task.estimated_duration.total_seconds() / 60)
+                    "task_id": task['task_id'],
+                    "title": task['title'],
+                    "description": task.get('description', ''),
+                    "category": task['category'],
+                    "priority": task['priority'],
+                    "status": task['status'],
+                    "estimated_duration_minutes": task.get('estimated_duration_minutes', 60)
                 }
-                if task.deadline:
-                    task_info["deadline"] = task.deadline.isoformat()
-                    task_info["deadline_human"] = task.deadline.strftime("%A, %B %d at %I:%M %p")
+                
+                # Add deadline if present
+                if 'deadline' in task:
+                    task_info["deadline"] = task['deadline']
+                    # Parse deadline for human-readable format
+                    try:
+                        deadline_dt = datetime.fromisoformat(task['deadline'])
+                        task_info["deadline_human"] = deadline_dt.strftime("%A, %B %d at %I:%M %p")
+                    except:
+                        task_info["deadline_human"] = task['deadline']
+                
+                # Add timestamps
+                if 'created_at' in task:
+                    task_info["created_at"] = task['created_at']
+                if 'updated_at' in task:
+                    task_info["updated_at"] = task['updated_at']
                 
                 tasks_data.append(task_info)
             
             # Group by status for summary
             status_counts = {}
-            for task in filtered_tasks:
-                status = task.status.value
+            for task in db_tasks:
+                status = task.get('status', 'TODO')
                 status_counts[status] = status_counts.get(status, 0) + 1
             
             result_data = {
-                "message": f"Found {len(filtered_tasks)} task(s) matching your criteria",
-                "task_count": len(filtered_tasks),
+                "message": f"Found {len(db_tasks)} task(s) matching your criteria",
+                "task_count": len(db_tasks),
                 "status_summary": status_counts,
                 "tasks": tasks_data,
                 "filters_applied": {
