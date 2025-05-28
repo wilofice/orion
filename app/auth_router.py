@@ -10,6 +10,8 @@ from dynamodb import save_user_tokens, get_decrypted_user_tokens, delete_user_to
     refresh_google_access_token, encrypt_token, decrypt_token
 from settings_v1 import settings
 from core.security import create_access_token, get_current_user
+from pydantic import (BaseModel, Field, field_validator,
+                      model_validator)
 # Imports for encryption
 # --- Configuration ---
 
@@ -38,10 +40,9 @@ AES_GCM_IV_LENGTH_BYTES = 12
 # you would integrate a proper authentication system (e.g., OAuth2 with JWTs for your app).
 
 # Dummy user model (replace with your actual user model from DynamoDB later)
-class User:
-    def __init__(self, id: str, username: str):
-        self.id = id
-        self.username = username
+class User(BaseModel):
+    id: str
+    username: str
 
 
 # Current user dependency using JWT authentication
@@ -73,6 +74,60 @@ class GoogleAuthCodePayload(BaseModel):
     #     return v
 
 
+class UserInfo(BaseModel):
+    """
+    User information extracted from Google ID token.
+    """
+    email: str
+    google_user_id: str
+
+
+class TokenInfo(BaseModel):
+    """
+    Information about which tokens were received from Google.
+    """
+    access_token_present: bool
+    refresh_token_present: bool
+    id_token_present: bool
+    scopes: Optional[str] = None
+
+
+class AuthResponse(BaseModel):
+    """
+    Response model for successful Google OAuth authentication.
+    """
+    message: str
+    user_id: str
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int  # Token expiration time in seconds
+    user_info: UserInfo
+    tokens_received: TokenInfo
+
+
+class DisconnectResponse(BaseModel):
+    """
+    Response model for disconnecting Google Calendar.
+    """
+    message: str
+
+
+class CurrentUserResponse(BaseModel):
+    """
+    Response model for current user information.
+    """
+    user_id: str
+    username: str
+    authenticated: bool
+
+
+class ErrorResponse(BaseModel):
+    """
+    Standard error response model.
+    """
+    detail: str
+
+
 # --- API Routers ---
 # We'll define routers for different parts of the API.
 # For now, we'll create stubs for the Google OAuth related endpoints.
@@ -80,14 +135,42 @@ class GoogleAuthCodePayload(BaseModel):
 
 CurrentUser = Annotated[User, Depends(get_authenticated_user)]
 
-@router.post("/google/connect", tags=["Authentication"])
+@router.post(
+    "/google/connect", 
+    response_model=AuthResponse, 
+    tags=["Authentication"],
+    summary="Exchange Google authorization code for JWT",
+    description="Exchanges a Google OAuth authorization code for access/refresh tokens and generates a JWT for API authentication.",
+    responses={
+        200: {
+            "description": "Successfully authenticated and generated JWT",
+            "model": AuthResponse
+        },
+        400: {
+            "description": "Invalid request (bad platform or OAuth error)",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        },
+        503: {
+            "description": "Google authentication service unavailable",
+            "model": ErrorResponse
+        }
+    }
+)
 async def connect_google_calendar(
         payload: GoogleAuthCodePayload = Body(...),
         current_user: Optional[User] = None
-):
+) -> AuthResponse:
     """
     Receives the Google authorization code from the mobile app,
-    and exchanges it with Google for access and refresh tokens.
+    exchanges it with Google for access and refresh tokens,
+    and generates a JWT bearer token for subsequent API calls.
+    
+    The returned JWT token should be included in the Authorization header
+    for all subsequent API requests as: `Authorization: Bearer <token>`
     """
     #print(f"Received Google auth code for user: {current_user.id}")
     print(f"  Redirect URI from payload: {payload.redirect_uri}")
@@ -219,23 +302,24 @@ async def connect_google_calendar(
             
             access_token = create_access_token(data=jwt_payload)
             
-            return {
-                "message": "Successfully exchanged authorization code for Google tokens.",
-                "user_id": new_user_id,
-                "access_token": access_token,
-                "token_type": "bearer",
-                "expires_in": settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Convert to seconds
-                "user_info": {
-                    "email": google_user_info.get("email", ""),
-                    "google_user_id": google_user_info.get("sub", "")
-                },
-                "tokens_received": {
-                    "access_token_present": "access_token" in google_tokens,
-                    "refresh_token_present": "refresh_token" in google_tokens,
-                    "id_token_present": "id_token" in google_tokens,
-                    "scopes": google_tokens.get("scope"),
-                }
-            }
+            # Create response using the AuthResponse model
+            return AuthResponse(
+                message="Successfully exchanged authorization code for Google tokens.",
+                user_id=new_user_id,
+                access_token=access_token,
+                token_type="bearer",
+                expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Convert to seconds
+                user_info=UserInfo(
+                    email=google_user_info.get("email", ""),
+                    google_user_id=google_user_info.get("sub", "")
+                ),
+                tokens_received=TokenInfo(
+                    access_token_present="access_token" in google_tokens,
+                    refresh_token_present="refresh_token" in google_tokens,
+                    id_token_present="id_token" in google_tokens,
+                    scopes=google_tokens.get("scope")
+                )
+            )
 
         except httpx.HTTPStatusError as e:
             # Error response from Google's token endpoint
@@ -261,12 +345,12 @@ async def connect_google_calendar(
             )
 
 
-@router.post(f"/auth/google/disconnect", tags=["Authentication"])
-async def disconnect_google_calendar(current_user: CurrentUser):
+@router.post(f"/auth/google/disconnect", response_model=DisconnectResponse, tags=["Authentication"])
+async def disconnect_google_calendar(current_user: CurrentUser) -> DisconnectResponse:
     # Example usage of delete_user_tokens
     success = delete_user_tokens(current_user.id)
     if success:
-        return {"message": "Successfully disconnected Google Calendar and deleted tokens."}
+        return DisconnectResponse(message="Successfully disconnected Google Calendar and deleted tokens.")
     else:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user tokens.")
 
@@ -299,13 +383,13 @@ async def test_refresh_token(current_user: CurrentUser):
         return {"message": "Token refresh failed or no refresh token available."}
 
 
-@router.get("/me", tags=["Authentication"])
-async def get_current_user_info(current_user: CurrentUser):
+@router.get("/me", response_model=CurrentUserResponse, tags=["Authentication"])
+async def get_current_user_info(current_user: CurrentUser) -> CurrentUserResponse:
     """
     Get the currently authenticated user's information from the JWT token.
     """
-    return {
-        "user_id": current_user.id,
-        "username": current_user.username,
-        "authenticated": True
-    }
+    return CurrentUserResponse(
+        user_id=current_user.id,
+        username=current_user.username,
+        authenticated=True
+    )

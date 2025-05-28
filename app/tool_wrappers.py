@@ -4,25 +4,21 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, time, date
 from typing import Dict, Any, Optional, List, Tuple
-
+from pydantic import (BaseModel, Field, field_validator,
+                      model_validator)
 import pytz # For timezone handling
 from dateutil.parser import parse as dateutil_parse # For flexible datetime parsing
 from pydantic import BaseModel, ValidationError, Field, field_validator
 from googleapiclient.errors import HttpError
 
 # Attempt to import dependent models and interfaces
-try:
-    # Interfaces from Task 5
-    from tool_interface import ExecutionContext, ExecutorToolResult, ToolResultStatus
-    # Core models from Task 1
-    from models import WantToDoActivity, TimeSlot, ActivityCategory, ActivityStatus, UserPreferences, DayOfWeek, EnergyLevel
-    # Core logic functions (conceptual imports)
-    from scheduler_logic import schedule_want_to_do_basic, ConflictInfo # Need ConflictInfo if handling conflicts here
-    # Calendar client interface (needed from context)
-    from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
-except ImportError as e:
-    # Fallback for running script directly or if structure differs
-    print("Warning: Could not import dependent modules. Using dummy classes/functions.")
+from tool_interface import ExecutionContext, ExecutorToolResult, ToolResultStatus
+# Core models from Task 1
+from models import WantToDoActivity, TimeSlot, ActivityCategory, ActivityStatus, UserPreferences, DayOfWeek, EnergyLevel
+# Core logic functions (conceptual imports)
+from scheduler_logic import schedule_want_to_do_basic, ConflictInfo # Need ConflictInfo if handling conflicts here
+# Calendar client interface (needed from context)
+from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
 
 # --- Abstract Base Class for Tool Wrappers (Task 6.1) ---
 
