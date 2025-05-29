@@ -17,10 +17,11 @@ class ResponseType(str, Enum):
 
 class ConversationRole(str, Enum):
     """Indicates the originator of a message in the conversation history."""
-    USER = "user"
-    MODEL = "model"
+    USER = "USER"
+    SYSTEM = "SYSTEM"  # Optional, for system messages or instructions
+    MODEL = "AI"
     # Represents the result of a function call requested by the model
-    FUNCTION = "function" # Changed from TOOL to match Gemini API
+    FUNCTION = "FUNCTION" # Changed from TOOL to match Gemini API
 
 class ToolResultStatus(str, Enum):
     """Indicates the outcome of a tool execution."""

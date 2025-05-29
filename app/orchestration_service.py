@@ -243,7 +243,7 @@ async def handle_chat_request(
         if history == None or len(history) == 0 : # Check if session ID was provided but not found
              logger.warning(f"[Session: {session_id}] Provided session ID not found, starting new history.")
              # Optionally create session explicitly if needed by append_turn implementation
-             await session_manager.create_session(user_id) # If create takes session_id
+             await session_manager.create_session(user_id, session_id) # If create takes session_id
              history = await session_manager.get_history(session_id)
 
         preferences = await get_user_preferences(user_id) # Task ORCH-9 (using dummy here)

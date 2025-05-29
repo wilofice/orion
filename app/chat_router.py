@@ -12,6 +12,7 @@ from orchestration_service import AbstractToolExecutor
 from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
 from models import ChatRequest, ChatResponse, ErrorDetail
 from dynamodb import get_decrypted_user_tokens
+from core.security import verify_token as jwt_verify_token
 
 from mangum import Mangum
 # --- Configuration ---
@@ -79,43 +80,12 @@ def get_calendar_client(email: str) -> AbstractCalendarClient:
 # from passlib.context import CryptContext
 # from fastapi import Security # Use Security for more fine-grained control
 
-# Simple Bearer token check for now
+# The verify_token function is now imported from core.security module
+# It properly decodes and validates JWT tokens
 bearer_scheme = HTTPBearer()
 
-async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> str:
-    """
-    Placeholder function to 'verify' a bearer token.
-    In a real application, this would decode and validate the JWT.
-    It should return the user identifier associated with the token.
-    """
-    token = credentials.credentials
-    logger.info(f"Received token (placeholder verification): {token[:10]}...") # Log prefix only
-    # --- Placeholder Logic ---
-    # Here you would:
-    # 1. Define SECRET_KEY, ALGORITHM.
-    # 2. try: payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    # 3. except JWTError: raise HTTPException(status_code=401, detail="Invalid token")
-    # 4. Extract user_id from payload.
-    # 5. Check if user exists, token expiry etc.
-    # 6. return user_id
-    # --- End Placeholder ---
-
-    # For now, just check if token exists and return a dummy user_id
-    # WARNING: This is NOT secure and only for demonstration.
-    if not token:
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    # Let's pretend the token itself contains the user_id for this placeholder
-    # In reality, you'd extract it *from* the decoded token payload.
-    # We'll compare it to the user_id in the request body later if needed.
-    dummy_user_id_from_token = "user_from_" + token[:5] # Dummy extraction
-    logger.info(f"Placeholder verification successful for token, dummy user: {dummy_user_id_from_token}")
-    return dummy_user_id_from_token # Return a dummy ID based on token
-
-
+# Use the imported JWT verify_token function
+verify_token = jwt_verify_token
 
 
 # --- FastAPI Application ---
@@ -157,14 +127,13 @@ async def process_chat_prompt(
     # --- Authorization Check (Optional but Recommended) ---
     # Ensure the user_id from the token matches the one in the request body
 
-    "TO BE UNCOMMENTED"
-    # if user_id_from_token != request.user_id:
-    #     logger.warning(f"Token user ID '{user_id_from_token}' does not match request user ID '{request.user_id}'.")
-    #     raise HTTPException(
-    #         status_code=http_status.HTTP_403_FORBIDDEN,
-    #         detail="User ID mismatch - cannot process request for another user."
-    #     )
-    # logger.info(f"User '{user_id_from_token}' authorized.")
+    if user_id_from_token != request.user_id:
+        logger.warning(f"Token user ID '{user_id_from_token}' does not match request user ID '{request.user_id}'.")
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="User ID mismatch - cannot process request for another user."
+        )
+    logger.info(f"User '{user_id_from_token}' authorized.")
 
     # --- Call the core orchestration logic ---
     try:
@@ -206,36 +175,5 @@ class CreateUserRequest(BaseModel):
     user_id: str
     email: str
     password: str  # In a real app, ensure this is hashed before storing
-
-@router.post(
-    "/users/create",
-    summary="Create a new user",
-    description="Allows the creation of a new user without authentication.",
-)
-async def create_user(request: CreateUserRequest):
-    """
-    Endpoint to create a new user without requiring authentication.
-    """
-    # Example logic for user creation
-    try:
-        # Replace with actual database logic
-        if request.user_id == "existing_user":
-            raise HTTPException(
-                status_code=400,
-                detail="User ID already exists."
-            )
-        # Simulate user creation
-        new_user = {
-            "user_id": request.user_id,
-            "email": request.email,
-            "password": "hashed_" + request.password  # Simulate password hashing
-        }
-        return {"message": "User created successfully", "user": new_user}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while creating the user: {str(e)}"
-        )
-
 
 
