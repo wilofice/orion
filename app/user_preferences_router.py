@@ -1,7 +1,7 @@
 import logging
 from datetime import time, timedelta, date
 from typing import Dict, List, Tuple, Optional, Any
-from fastapi import APIRouter, HTTPException, status, Body
+from fastapi import APIRouter, HTTPException, status, Body, Depends
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from dynamodb import (
@@ -11,6 +11,7 @@ from dynamodb import (
     delete_user_preferences
 )
 from models import UserPreferences, DayOfWeek, EnergyLevel, ActivityCategory
+from core.security import verify_token
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -234,7 +235,8 @@ def convert_dynamodb_to_response(db_prefs: Dict[str, Any]) -> PreferencesRespons
 @router.post("/{user_id}", response_model=PreferencesResponse)
 async def create_user_preferences(
     user_id: str,
-    request: CreatePreferencesRequest = Body(...)
+    request: CreatePreferencesRequest = Body(...),
+    current_user_id: str = Depends(verify_token)
 ) -> PreferencesResponse:
     """
     Create new user preferences.
@@ -250,6 +252,14 @@ async def create_user_preferences(
         HTTPException: If preferences already exist or creation fails
     """
     logger.info(f"Creating preferences for user {user_id}")
+    
+    # Verify that the authenticated user can only create their own preferences
+    if current_user_id != user_id:
+        logger.warning(f"User {current_user_id} attempted to create preferences for user {user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only create your own preferences"
+        )
     
     # Check if preferences already exist
     existing = get_user_preferences(user_id)
@@ -346,7 +356,10 @@ async def create_user_preferences(
 
 
 @router.get("/{user_id}", response_model=PreferencesResponse)
-async def get_preferences(user_id: str) -> PreferencesResponse:
+async def get_preferences(
+    user_id: str,
+    current_user_id: str = Depends(verify_token)
+) -> PreferencesResponse:
     """
     Retrieve user preferences.
     
@@ -361,6 +374,14 @@ async def get_preferences(user_id: str) -> PreferencesResponse:
     """
     logger.info(f"Retrieving preferences for user {user_id}")
     
+    # Verify that the authenticated user can only get their own preferences
+    if current_user_id != user_id:
+        logger.warning(f"User {current_user_id} attempted to get preferences for user {user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own preferences"
+        )
+    
     preferences = get_user_preferences(user_id)
     if not preferences:
         raise HTTPException(
@@ -374,7 +395,8 @@ async def get_preferences(user_id: str) -> PreferencesResponse:
 @router.put("/{user_id}")
 async def update_preferences(
     user_id: str,
-    request: UpdatePreferencesRequest = Body(...)
+    request: UpdatePreferencesRequest = Body(...),
+    current_user_id: str = Depends(verify_token)
 ) -> Dict[str, str]:
     """
     Update existing user preferences.
@@ -390,6 +412,14 @@ async def update_preferences(
         HTTPException: If preferences not found or update fails
     """
     logger.info(f"Updating preferences for user {user_id}")
+    
+    # Verify that the authenticated user can only update their own preferences
+    if current_user_id != user_id:
+        logger.warning(f"User {current_user_id} attempted to update preferences for user {user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only update your own preferences"
+        )
     
     # Check if preferences exist
     existing = get_user_preferences(user_id)
@@ -476,7 +506,10 @@ async def update_preferences(
 
 
 @router.delete("/{user_id}")
-async def reset_preferences(user_id: str) -> Dict[str, str]:
+async def reset_preferences(
+    user_id: str,
+    current_user_id: str = Depends(verify_token)
+) -> Dict[str, str]:
     """
     Reset (delete) user preferences.
     
@@ -490,6 +523,14 @@ async def reset_preferences(user_id: str) -> Dict[str, str]:
         HTTPException: If deletion fails
     """
     logger.info(f"Resetting preferences for user {user_id}")
+    
+    # Verify that the authenticated user can only reset their own preferences
+    if current_user_id != user_id:
+        logger.warning(f"User {current_user_id} attempted to reset preferences for user {user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only reset your own preferences"
+        )
     
     # Check if preferences exist
     existing = get_user_preferences(user_id)

@@ -88,8 +88,6 @@ bearer_scheme = HTTPBearer()
 verify_token = jwt_verify_token
 
 
-
-
 # --- FastAPI Application ---
 
 
@@ -177,36 +175,5 @@ class CreateUserRequest(BaseModel):
     user_id: str
     email: str
     password: str  # In a real app, ensure this is hashed before storing
-
-@router.post(
-    "/users/create",
-    summary="Create a new user",
-    description="Allows the creation of a new user without authentication.",
-)
-async def create_user(request: CreateUserRequest):
-    """
-    Endpoint to create a new user without requiring authentication.
-    """
-    # Example logic for user creation
-    try:
-        # Replace with actual database logic
-        if request.user_id == "existing_user":
-            raise HTTPException(
-                status_code=400,
-                detail="User ID already exists."
-            )
-        # Simulate user creation
-        new_user = {
-            "user_id": request.user_id,
-            "email": request.email,
-            "password": "hashed_" + request.password  # Simulate password hashing
-        }
-        return {"message": "User created successfully", "user": new_user}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while creating the user: {str(e)}"
-        )
-
 
 

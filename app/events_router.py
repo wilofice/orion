@@ -8,6 +8,7 @@ from calendar_client import GoogleCalendarAPIClient
 from dynamodb import get_decrypted_user_tokens
 from models import TimeSlot
 from zoneinfo import ZoneInfo
+from core.security import verify_token
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -113,7 +114,8 @@ def convert_timeslot_to_event(slot: TimeSlot, event_data: Dict[str, Any]) -> Cal
 async def get_upcoming_events(
     user_id: str,
     days: int = 7,
-    timezone: str = "UTC"
+    timezone: str = "UTC",
+    current_user_id: str = Depends(verify_token)
 ) -> EventsResponse:
     """
     Retrieve upcoming events for a user from their Google Calendar.
@@ -130,6 +132,14 @@ async def get_upcoming_events(
         HTTPException: If authentication fails or calendar access errors occur
     """
     logger.info(f"Fetching upcoming events for user {user_id} for next {days} days in timezone {timezone}")
+    
+    # Verify that the authenticated user can only access their own events
+    if current_user_id != user_id:
+        logger.warning(f"User {current_user_id} attempted to access events for user {user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own calendar events"
+        )
     
     # Validate days parameter
     if days < 1 or days > 30:
@@ -239,7 +249,8 @@ async def get_upcoming_events(
 async def get_busy_slots(
     user_id: str,
     days: int = 7,
-    timezone: str = "UTC"
+    timezone: str = "UTC",
+    current_user_id: str = Depends(verify_token)
 ) -> Dict[str, Any]:
     """
     Retrieve busy time slots for a user from their Google Calendar.
@@ -257,6 +268,14 @@ async def get_busy_slots(
         HTTPException: If authentication fails or calendar access errors occur
     """
     logger.info(f"Fetching busy slots for user {user_id} for next {days} days in timezone {timezone}")
+    
+    # Verify that the authenticated user can only access their own busy slots
+    if current_user_id != user_id:
+        logger.warning(f"User {current_user_id} attempted to access busy slots for user {user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own calendar busy slots"
+        )
     
     # Validate parameters
     if days < 1 or days > 30:
