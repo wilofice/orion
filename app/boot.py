@@ -7,6 +7,7 @@ import chat_router
 import conversation_router
 import events_router
 import user_preferences_router
+import tool_history_router
 import logging
 from fastapi import FastAPI, Request
 # Set up logging
@@ -45,6 +46,7 @@ app.include_router(chat_router.router)
 app.include_router(conversation_router.router)
 app.include_router(events_router.router)
 app.include_router(user_preferences_router.router)
+app.include_router(tool_history_router.router)
 
 
 @app.get("/health", tags=["Health"])

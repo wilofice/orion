@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 import json
 from pydantic import BaseModel, Field
+import time as time_module
 # --- Interface Imports ---
 # Assuming interfaces and models from previous tasks are defined and importable
     # From Task ORCH-3 / main.py
@@ -27,6 +28,8 @@ from models import UserPreferences
 from calendar_client import AbstractCalendarClient
 import threading
 from settings_v1 import settings
+# Import the tool execution result persistence function
+from dynamodb import save_tool_execution_result
 
 class GenAIClientSingleton:
     _instance = None
@@ -290,11 +293,40 @@ async def handle_chat_request(
                     preferences=preferences,
                     calendar_client=calendar_client
                 )
+                
+                # Generate execution ID and measure execution time
+                execution_id = str(uuid.uuid4())
+                start_time = time_module.time()
+                
                 tool_exec_result: ExecutorToolResult = tool_executor.execute_tool(
                     call=gemini_response.function_call,
                     context=exec_context
                 )
+                
+                # Calculate execution duration
+                end_time = time_module.time()
+                duration_ms = int((end_time - start_time) * 1000)
+                
                 logger.info(f"[Session: {session_id}] Tool execution result: {tool_exec_result.status}")
+                
+                # Save tool execution result to DynamoDB
+                save_result = save_tool_execution_result(
+                    session_id=session_id,
+                    execution_id=execution_id,
+                    user_id=user_id,
+                    tool_name=gemini_response.function_call.name,
+                    function_call={
+                        "name": gemini_response.function_call.name,
+                        "args": gemini_response.function_call.args
+                    },
+                    execution_result=tool_exec_result.result if tool_exec_result.result else {},
+                    status=tool_exec_result.status.value,
+                    error_details=tool_exec_result.error_details,
+                    duration_ms=duration_ms
+                )
+                
+                if save_result != "success":
+                    logger.warning(f"Failed to save tool execution result: {save_result}")
 
                 # 8.6.2 Format tool result for Gemini history
                 # Convert ExecutorToolResult into the ToolResult structure expected by Gemini API history
