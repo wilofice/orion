@@ -161,7 +161,7 @@ CurrentUser = Annotated[User, Depends(get_authenticated_user)]
     }
 )
 async def connect_google_calendar(
-        payload: GoogleAuthCodePayload = Body(...)
+        payload: GoogleAuthCodePayload = Body(..., embed=True)
 ) -> AuthResponse:
     """
     Receives the Google authorization code from the mobile app,
