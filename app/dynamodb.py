@@ -129,21 +129,48 @@ def create_user_tasks_table():
     except Exception as e:
         print(f"Error creating table {table_name}: {e}")
 
+
+def create_user_email_mapping_table():
+    dynamodb = get_dynamodb_resource()
+    table_name = settings.DYNAMODB_USER_EMAIL_MAPPING_TABLE_NAME
+
+    try:
+        table = dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[
+                {'AttributeName': 'email', 'KeyType': 'HASH'},  # Partition key
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'email', 'AttributeType': 'S'},
+            ],
+            ProvisionedThroughput={
+                'ReadCapacityUnits': 5,
+                'WriteCapacityUnits': 5,
+            }
+        )
+        table.wait_until_exists()
+        print(f"Table {table_name} created successfully.")
+    except Exception as e:
+        print(f"Error creating table {table_name}: {e}")
+
 create_user_tokens_table()
 create_chat_sessions_table()
 create_user_preferences_table()
 create_user_tasks_table()
+create_user_email_mapping_table()
 
 user_tokens_table = get_dynamodb_resource().Table(settings.DYNAMODB_USER_TOKENS_TABLE_NAME)
 chat_sessions_table = get_dynamodb_resource().Table(settings.DYNAMODB_CHAT_SESSIONS_TABLE_NAME)
 user_preferences_table = get_dynamodb_resource().Table(settings.DYNAMODB_USER_PREFERENCES_TABLE_NAME)
 user_tasks_table = get_dynamodb_resource().Table(settings.DYNAMODB_USER_TASKS_TABLE_NAME)
+user_email_mapping_table = get_dynamodb_resource().Table(settings.DYNAMODB_USER_EMAIL_MAPPING_TABLE_NAME)
 
 
 def save_user_tokens(
         app_user_id: str, access_token: str, access_token_expires_in: int,
         scopes: Optional[str] = None, refresh_token: Optional[str] = None,
-        id_token_str: Optional[str] = None, existing_item: Optional[Dict[str, Any]] = None
+        id_token_str: Optional[str] = None, existing_item: Optional[Dict[str, Any]] = None,
+        platform: Optional[str] = None
 ) -> str:
     current_timestamp = int(time.time())
     access_token_expires_at = current_timestamp + access_token_expires_in
@@ -156,6 +183,12 @@ def save_user_tokens(
         'updated_at': current_timestamp,
     }
     if scopes: item_to_save['scopes'] = scopes
+    
+    # Store platform if provided (for new tokens) or preserve existing platform
+    if platform:
+        item_to_save['platform'] = platform
+    elif existing_item and 'platform' in existing_item:
+        item_to_save['platform'] = existing_item['platform']
 
     if id_token_str:  # This typically only comes with the initial auth code exchange
         try:
@@ -301,8 +334,19 @@ async def refresh_google_access_token(app_user_id: str) -> Optional[str]:
         delete_user_tokens(app_user_id)
         return None
 
+    # Determine which client_id to use based on stored platform
+    platform = stored_item_raw.get('platform', 'ios')  # Default to iOS if not stored
+    if platform == 'ios':
+        client_id = settings.GOOGLE_CLIENT_ID_IOS
+    elif platform == 'android':
+        client_id = settings.GOOGLE_CLIENT_ID_ANDROID
+    else:
+        # Fallback to iOS if platform is unknown
+        client_id = settings.GOOGLE_CLIENT_ID_IOS
+        print(f"Unknown platform '{platform}' for {app_user_id}, defaulting to iOS client_id")
+    
     refresh_request_data = {
-        "client_id": settings.GOOGLE_CLIENT_ID,  # Using mobile's client_id
+        "client_id": client_id,  # Using platform-specific client_id
         # No client_secret, consistent with user's current working setup
         "refresh_token": decrypted_refresh_token,
         "grant_type": "refresh_token",
@@ -345,7 +389,8 @@ async def refresh_google_access_token(app_user_id: str) -> Optional[str]:
                 # Use new scopes if provided, else old
                 refresh_token=new_token_data.get("refresh_token"),  # Use new refresh token if provided by Google
                 id_token_str=new_token_data.get("id_token"),  # Use new id_token if provided
-                existing_item=stored_item_raw  # Pass the original raw item to help preserve fields
+                existing_item=stored_item_raw,  # Pass the original raw item to help preserve fields
+                platform=stored_item_raw.get('platform')  # Preserve the platform
             )
 
             if not save_success == "success":
@@ -759,4 +804,88 @@ def delete_user_task(user_id: str, task_id: str) -> bool:
         return False
     except Exception as e:
         print(f"An unexpected error occurred during task deletion: {e}")
+        return False
+
+
+# --- User Email Mapping Operations ---
+
+def save_user_email_mapping(email: str, user_id: str) -> str:
+    """
+    Saves the mapping between user email and user ID.
+    
+    Args:
+        email: The user's email address
+        user_id: The user's ID (GUID)
+        
+    Returns:
+        "success" if successful, error message otherwise
+    """
+    try:
+        current_timestamp = int(time.time())
+        item = {
+            'email': email.lower(),  # Store email in lowercase for consistency
+            'user_id': user_id,
+            'created_at': current_timestamp,
+            'updated_at': current_timestamp
+        }
+        
+        user_email_mapping_table.put_item(Item=item)
+        print(f"Successfully saved email mapping for {email} -> {user_id}")
+        return "success"
+    except ClientError as e:
+        error_msg = f"Error saving email mapping to DynamoDB: {e.response['Error']['Message']}"
+        print(error_msg)
+        return error_msg
+    except Exception as e:
+        error_msg = f"An unexpected error occurred during email mapping save: {e}"
+        print(error_msg)
+        return error_msg
+
+
+def get_user_id_by_email(email: str) -> Optional[str]:
+    """
+    Retrieves the user ID for a given email address.
+    
+    Args:
+        email: The user's email address
+        
+    Returns:
+        The user ID if found, None otherwise
+    """
+    try:
+        response = user_email_mapping_table.get_item(Key={'email': email.lower()})
+        if 'Item' not in response:
+            print(f"No user ID found for email: {email}")
+            return None
+        
+        user_id = response['Item']['user_id']
+        print(f"Successfully retrieved user ID for email {email}: {user_id}")
+        return user_id
+    except ClientError as e:
+        print(f"Error retrieving user ID from DynamoDB for {email}: {e.response['Error']['Message']}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during user ID retrieval: {e}")
+        return None
+
+
+def delete_user_email_mapping(email: str) -> bool:
+    """
+    Deletes the email to user ID mapping.
+    
+    Args:
+        email: The user's email address
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        user_email_mapping_table.delete_item(Key={'email': email.lower()})
+        print(f"Successfully deleted email mapping for {email}")
+        return True
+    except ClientError as e:
+        print(f"Error deleting email mapping from DynamoDB: {e.response['Error']['Message']}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during email mapping deletion: {e}")
         return False

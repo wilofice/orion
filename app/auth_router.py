@@ -7,7 +7,7 @@ import json
 import base64
 
 from dynamodb import save_user_tokens, get_decrypted_user_tokens, delete_user_tokens, \
-    refresh_google_access_token, encrypt_token, decrypt_token
+    refresh_google_access_token, encrypt_token, decrypt_token, get_user_id_by_email, save_user_email_mapping
 from settings_v1 import settings
 from core.security import create_access_token, get_current_user
 from pydantic import (BaseModel, Field, field_validator,
@@ -249,32 +249,9 @@ async def connect_google_calendar(
                 except Exception as e:
                     print(f"ERROR during refresh token encryption/decryption test: {e}")
 
-              # Added for generating GUIDs
-            new_user_id = str(uuid.uuid4())  # Generate a unique GUID for the user
-            save_success = save_user_tokens(
-                app_user_id=new_user_id,  # Generate a unique GUID for the user
-                access_token=access_token,
-                access_token_expires_in=google_tokens.get('expires_in'),
-                scopes=google_tokens.get('scope'),
-                refresh_token=refresh_token,
-                id_token_str=google_tokens.get('id_token')
-            )
-
-            if not save_success == "success":
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                    detail=save_success)
-
-            # Test retrieval (optional, for debugging this task)
-            retrieved_tokens = get_decrypted_user_tokens(new_user_id)
-            if retrieved_tokens:
-                print(f"TEST: Successfully retrieved and decrypted tokens for {new_user_id}")
-                print(
-                    f"TEST: Retrieved access token matches original: {retrieved_tokens.get('access_token') == access_token}")
-            else:
-                print(f"TEST: Failed to retrieve/decrypt tokens for {new_user_id}")
-
-            # Parse the Google ID token to get user information
+            # Parse the Google ID token to get user email before saving tokens
             google_user_info = {}
+            user_email = None
             if "id_token" in google_tokens:
                 try:
                     # Decode the ID token (without verification for now - in production, verify with Google's public keys)
@@ -287,13 +264,62 @@ async def connect_google_calendar(
                         payload += "=" * (4 - len(payload) % 4)
                         decoded_payload = base64.urlsafe_b64decode(payload)
                         google_user_info = json.loads(decoded_payload)
-                        print(f"Google user info: email={google_user_info.get('email')}, sub={google_user_info.get('sub')}")
+                        user_email = google_user_info.get('email')
+                        print(f"Google user info: email={user_email}, sub={google_user_info.get('sub')}")
                 except Exception as e:
                     print(f"Failed to decode ID token: {e}")
+                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                        detail="Failed to decode user information from Google ID token")
+            
+            if not user_email:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                    detail="No email found in Google ID token")
+            
+            # Check if user already exists based on email
+            existing_user_id = get_user_id_by_email(user_email)
+            
+            if existing_user_id:
+                # User already exists, use their existing ID
+                user_id = existing_user_id
+                print(f"Existing user found for email {user_email}: {user_id}")
+            else:
+                # New user, generate a new GUID and save the email mapping
+                user_id = str(uuid.uuid4())
+                print(f"New user - generated ID for email {user_email}: {user_id}")
+                
+                # Save the email to user ID mapping
+                mapping_result = save_user_email_mapping(user_email, user_id)
+                if mapping_result != "success":
+                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                        detail=f"Failed to save user email mapping: {mapping_result}")
+            
+            # Save tokens with the determined user ID and platform
+            save_success = save_user_tokens(
+                app_user_id=user_id,
+                access_token=access_token,
+                access_token_expires_in=google_tokens.get('expires_in'),
+                scopes=google_tokens.get('scope'),
+                refresh_token=refresh_token,
+                id_token_str=google_tokens.get('id_token'),
+                platform=payload.platform
+            )
+
+            if not save_success == "success":
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                    detail=save_success)
+
+            # Test retrieval (optional, for debugging this task)
+            retrieved_tokens = get_decrypted_user_tokens(user_id)
+            if retrieved_tokens:
+                print(f"TEST: Successfully retrieved and decrypted tokens for {user_id}")
+                print(
+                    f"TEST: Retrieved access token matches original: {retrieved_tokens.get('access_token') == access_token}")
+            else:
+                print(f"TEST: Failed to retrieve/decrypt tokens for {user_id}")
             
             # Generate JWT access token for our API
             jwt_payload = {
-                "user_id": new_user_id,
+                "user_id": user_id,
                 "email": google_user_info.get("email", ""),
                 "google_user_id": google_user_info.get("sub", ""),
                 "scopes": google_tokens.get("scope", "").split() if google_tokens.get("scope") else []
@@ -304,7 +330,7 @@ async def connect_google_calendar(
             # Create response using the AuthResponse model
             return AuthResponse(
                 message="Successfully exchanged authorization code for Google tokens.",
-                user_id=new_user_id,
+                user_id=user_id,
                 access_token=access_token,
                 token_type="bearer",
                 expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Convert to seconds
