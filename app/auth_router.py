@@ -64,7 +64,7 @@ class GoogleAuthCodePayload(BaseModel):
     code_verifier: str
     # Using HttpUrl for basic validation that it's a URL.
     # Further validation (e.g., matching against pre-registered URIs) can be added.
-    redirect_uri: AnyUrl # Ensures it's a valid URL format
+    redirect_uri: str # Ensures it's a valid URL format
 
     # Example for stricter validation if needed:
     # @validator('authorization_code')
@@ -161,8 +161,7 @@ CurrentUser = Annotated[User, Depends(get_authenticated_user)]
     }
 )
 async def connect_google_calendar(
-        payload: GoogleAuthCodePayload = Body(...),
-        current_user: Optional[User] = None
+        payload: GoogleAuthCodePayload = Body(...)
 ) -> AuthResponse:
     """
     Receives the Google authorization code from the mobile app,
