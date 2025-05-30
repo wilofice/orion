@@ -129,10 +129,10 @@ def create_user_tasks_table():
     except Exception as e:
         print(f"Error creating table {table_name}: {e}")
 
-#create_user_tokens_table()
-#create_chat_sessions_table()
-#create_user_preferences_table()
-#create_user_tasks_table()
+create_user_tokens_table()
+create_chat_sessions_table()
+create_user_preferences_table()
+create_user_tasks_table()
 
 user_tokens_table = get_dynamodb_resource().Table(settings.DYNAMODB_USER_TOKENS_TABLE_NAME)
 chat_sessions_table = get_dynamodb_resource().Table(settings.DYNAMODB_CHAT_SESSIONS_TABLE_NAME)
