@@ -53,4 +53,5 @@ async def health_check():
     return {"status": "healthy", "message": f"Welcome to {settings.PROJECT_NAME}"}
 
 
+# AWS Lambda entry point
 lambda_handler = Mangum(app, lifespan="off")
