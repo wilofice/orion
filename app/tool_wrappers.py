@@ -10,6 +10,7 @@ import pytz # For timezone handling
 from dateutil.parser import parse as dateutil_parse # For flexible datetime parsing
 from pydantic import BaseModel, ValidationError, Field, field_validator
 from googleapiclient.errors import HttpError
+import asyncio
 
 # Attempt to import dependent models and interfaces
 from tool_interface import ExecutionContext, ExecutorToolResult, ToolResultStatus
@@ -18,7 +19,7 @@ from models import WantToDoActivity, TimeSlot, ActivityCategory, ActivityStatus,
 # Core logic functions (conceptual imports)
 from scheduler_logic import schedule_want_to_do_basic, ConflictInfo # Need ConflictInfo if handling conflicts here
 # Calendar client interface (needed from context)
-from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
+from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient, APICallError
 
 # --- Abstract Base Class for Tool Wrappers (Task 6.1) ---
 
@@ -198,11 +199,13 @@ class ScheduleActivityWrapper(ToolWrapper):
                  check_end = end_time
 
             self.logger.debug(f"Checking for conflicts between {check_start} and {check_end}")
-            # Get busy slots from the calendar client : make method call async later
-            conflicting_busy_slots = context.calendar_client.get_busy_slots(
-                calendar_id='primary', # Assuming primary for now
-                start_time=check_start,
-                end_time=check_end
+            # Get busy slots from the calendar client using asyncio
+            conflicting_busy_slots = asyncio.run(
+                context.calendar_client.get_busy_slots(
+                    calendar_id='primary', # Assuming primary for now
+                    start_time=check_start,
+                    end_time=check_end
+                )
             )
 
             if conflicting_busy_slots:
@@ -216,13 +219,15 @@ class ScheduleActivityWrapper(ToolWrapper):
 
             # 2. No conflict, add the event to the calendar
             self.logger.info(f"No conflicts found. Adding event '{title}' to calendar.")
-            # Conceptual call - AbstractCalendarClient needs an add_event method
-            created_event_details = context.calendar_client.add_event(
-                title=title,
-                start_time=start_time,
-                end_time=end_time,
-                description=description
-                # Potentially add attendees, location etc. if provided in args
+            # Call async add_event method using asyncio
+            created_event_details = asyncio.run(
+                context.calendar_client.add_event(
+                    title=title,
+                    start_time=start_time,
+                    end_time=end_time,
+                    description=description
+                    # Potentially add attendees, location etc. if provided in args
+                )
             )
 
             self.logger.info(f"Event added successfully: {created_event_details}")
@@ -321,11 +326,13 @@ class ScheduleActivityWrapper(ToolWrapper):
                 query_end = query_start + timedelta(days=7) # Configurable range
                 self.logger.info(f"Fetching available slots from {query_start} to {query_end}")
                 # Ensure calendar_client is awaited if its methods are async
-                available_slots = context.calendar_client.get_available_time_slots(
-                    calendar_id='primary', # Assuming primary for now
-                    preferences=context.preferences,
-                    start_time=query_start,
-                    end_time=query_end
+                available_slots = asyncio.run(
+                    context.calendar_client.get_available_time_slots(
+                        calendar_id='primary', # Assuming primary for now
+                        preferences=context.preferences,
+                        start_time=query_start,
+                        end_time=query_end
+                    )
                 )
                 self.logger.info(f"Found {len(available_slots)} available slots matching preferences.")
 
@@ -345,11 +352,13 @@ class ScheduleActivityWrapper(ToolWrapper):
 
                     # TODO: Persist the scheduled event (e.g., add to Google Calendar via calendar_client, update task status in DB)
                     # Example conceptual call:
-                    created_event_details = context.calendar_client.add_event(
-                         title=activity_to_schedule.title,
-                         start_time=scheduled_slot.start_time,
-                         end_time=scheduled_slot.end_time,
-                         description=activity_to_schedule.description
+                    created_event_details = asyncio.run(
+                        context.calendar_client.add_event(
+                            title=activity_to_schedule.title,
+                            start_time=scheduled_slot.start_time,
+                            end_time=scheduled_slot.end_time,
+                            description=activity_to_schedule.description
+                        )
                     )
                     event_id = created_event_details.get("id")
                     event_link = created_event_details.get("htmlLink")
@@ -441,30 +450,24 @@ class GetCalendarEventsWrapper(ToolWrapper):
             # 4. Get busy slots from calendar (these represent the user's events)
             self.logger.info(f"Fetching events from {start_time} to {end_time}")
             
-            # Get calendar service to access full event details
-            service = context.calendar_client._get_service()
+            # Get events with full details using the calendar client
+            events = asyncio.run(
+                context.calendar_client.get_events(
+                    calendar_id='primary',
+                    start_time=start_time,
+                    end_time=end_time,
+                    single_events=True,
+                    order_by='startTime',
+                    max_results=250
+                )
+            )
             
             events_list = []
-            page_token = None
             
-            while True:
-                # Call Google Calendar API directly to get full event details
-                events_result = service.events().list(
-                    calendarId='primary',
-                    timeMin=start_time.isoformat(),
-                    timeMax=end_time.isoformat(),
-                    singleEvents=True,
-                    orderBy='startTime',
-                    pageToken=page_token,
-                    maxResults=250
-                ).execute()
-                
-                events = events_result.get('items', [])
-                
-                for event in events:
-                    # Skip transparent events (marked as "Free")
-                    if event.get('transparency') == 'transparent':
-                        continue
+            for event in events:
+                # Skip transparent events (marked as "Free")
+                if event.get('transparency') == 'transparent':
+                    continue
                     
                     # Check if it's an all-day event
                     is_all_day = 'date' in event.get('start', {})
@@ -520,10 +523,6 @@ class GetCalendarEventsWrapper(ToolWrapper):
                         event_data['is_recurring'] = False
                     
                     events_list.append(event_data)
-                
-                page_token = events_result.get('nextPageToken')
-                if not page_token:
-                    break
             
             # Sort events by start time
             events_list.sort(key=lambda e: e.get('start_time') or e.get('start_date'))
@@ -845,16 +844,16 @@ class RescheduleEventWrapper(ToolWrapper):
             return self._create_error_result("End time must be after start time")
         
         try:
-            service = context.calendar_client._get_service()
-            
             # 3. Get the existing event
             try:
-                existing_event = service.events().get(
-                    calendarId='primary',
-                    eventId=validated_args.event_id
-                ).execute()
-            except HttpError as e:
-                if e.resp.status == 404:
+                existing_event = asyncio.run(
+                    context.calendar_client.get_event(
+                        calendar_id='primary',
+                        event_id=validated_args.event_id
+                    )
+                )
+            except APICallError as e:
+                if "not found" in str(e).lower():
                     return self._create_error_result(f"Event with ID '{validated_args.event_id}' not found")
                 raise
             
@@ -864,10 +863,12 @@ class RescheduleEventWrapper(ToolWrapper):
                 check_start = new_start + timedelta(microseconds=1)
                 check_end = new_end - timedelta(microseconds=1)
                 
-                conflicting_events = context.calendar_client.get_busy_slots(
-                    calendar_id='primary',
-                    start_time=check_start,
-                    end_time=check_end
+                conflicting_events = asyncio.run(
+                    context.calendar_client.get_busy_slots(
+                        calendar_id='primary',
+                        start_time=check_start,
+                        end_time=check_end
+                    )
                 )
                 
                 # Filter out the current event from conflicts
@@ -895,11 +896,13 @@ class RescheduleEventWrapper(ToolWrapper):
                 }
             }
             
-            updated_event = service.events().patch(
-                calendarId='primary',
-                eventId=validated_args.event_id,
-                body=event_update
-            ).execute()
+            updated_event = asyncio.run(
+                context.calendar_client.update_event(
+                    calendar_id='primary',
+                    event_id=validated_args.event_id,
+                    updates=event_update
+                )
+            )
             
             self.logger.info(f"Successfully rescheduled event '{existing_event.get('summary', 'Untitled')}'")
             
@@ -966,16 +969,16 @@ class CancelEventWrapper(ToolWrapper):
             return self._create_error_result(f"Invalid arguments for cancellation: {e.errors()}")
         
         try:
-            service = context.calendar_client._get_service()
-            
             # 2. Get the event details before deletion
             try:
-                event = service.events().get(
-                    calendarId='primary',
-                    eventId=validated_args.event_id
-                ).execute()
-            except HttpError as e:
-                if e.resp.status == 404:
+                event = asyncio.run(
+                    context.calendar_client.get_event(
+                        calendar_id='primary',
+                        event_id=validated_args.event_id
+                    )
+                )
+            except APICallError as e:
+                if "not found" in str(e).lower():
                     return self._create_error_result(f"Event with ID '{validated_args.event_id}' not found")
                 raise
             
@@ -984,11 +987,12 @@ class CancelEventWrapper(ToolWrapper):
             attendee_count = len(event.get('attendees', []))
             
             # 3. Delete the event
-            service.events().delete(
-                calendarId='primary',
-                eventId=validated_args.event_id,
-                sendNotifications=validated_args.send_notifications
-            ).execute()
+            asyncio.run(
+                context.calendar_client.delete_event(
+                    calendar_id='primary',
+                    event_id=validated_args.event_id
+                )
+            )
             
             self.logger.info(f"Successfully cancelled event '{event_title}'")
             
