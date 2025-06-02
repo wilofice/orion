@@ -169,13 +169,14 @@ async def get_upcoming_events(
         # Get busy slots (which represent the user's events)
         # Note: We need to modify this to also get event details
         service = calendar_client._get_service()
-        
+
         events_list = []
         page_token = None
         
         while True:
             # Call the Google Calendar API directly to get full event details
-            events_result = service.events().list(
+            data = service.events()
+            events_result = data.list(
                 calendarId='primary',
                 timeMin=start_time.isoformat(),
                 timeMax=end_time.isoformat(),

@@ -41,7 +41,11 @@ async def list_user_conversations(
             filtered_turns = []
             for turn in item.get("history", []):
                 turn_obj = ConversationTurn(**turn)
-                if turn_obj.role in [ConversationRole.USER, ConversationRole.MODEL]:
+                if turn_obj.role == ConversationRole.USER:
+                    turn_obj.parts = [part.split("USER: ")[1] for part in turn_obj.parts if isinstance(part, str)]
+                    filtered_turns.append(turn_obj)
+                if turn_obj.role == ConversationRole.MODEL:
+                    turn_obj.parts = [part.split("AI: ")[1] for part in turn_obj.parts if isinstance(part, str)]
                     filtered_turns.append(turn_obj)
             
             conversations.append(

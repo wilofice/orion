@@ -258,11 +258,10 @@ async def connect_google_calendar(
                     # The ID token is a JWT with 3 parts separated by dots
                     id_token_parts = google_tokens["id_token"].split(".")
                     if len(id_token_parts) == 3:
-                        # Decode the payload (second part)
                         # Add padding if necessary
-                        payload = id_token_parts[1]
-                        payload += "=" * (4 - len(payload) % 4)
-                        decoded_payload = base64.urlsafe_b64decode(payload)
+                        google_payload = id_token_parts[1]
+                        google_payload += "=" * (4 - len(google_payload) % 4)
+                        decoded_payload = base64.urlsafe_b64decode(google_payload)
                         google_user_info = json.loads(decoded_payload)
                         user_email = google_user_info.get('email')
                         print(f"Google user info: email={user_email}, sub={google_user_info.get('sub')}")
