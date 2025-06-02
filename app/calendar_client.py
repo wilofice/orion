@@ -4,8 +4,6 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, date, time
 from typing import List, Dict, Any, Optional
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 
 from dynamodb import refresh_google_access_token
 # Assuming models.py is in the same directory or accessible via PYTHONPATH
@@ -27,6 +25,7 @@ CLIENT_SECRET_FILE = 'credentials/client_secret.json'
 TOKEN_FILE = 'credentials/token.json'
 # TODO: Define path for service account key file if using that method
 SERVICE_ACCOUNT_FILE = 'credentials/service_account.json'
+import asyncio
 
 
 # --- Custom Exceptions ---
@@ -50,27 +49,27 @@ class AbstractCalendarClient(ABC):
     """Abstract base class for calendar API clients."""
 
     @abstractmethod
-    async def authenticate(self) -> None:
+    def authenticate(self) -> None:
         """Handles authentication with the calendar provider."""
         pass
 
     @abstractmethod
-    async def get_busy_slots(self, calendar_id: str, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    def get_busy_slots(self, calendar_id: str, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
         """Fetches busy time slots from the specified calendar."""
         pass
 
     @abstractmethod
-    async def calculate_free_slots(self, busy_slots: List[TimeSlot], start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    def calculate_free_slots(self, busy_slots: List[TimeSlot], start_time: datetime, end_time: datetime) -> List[TimeSlot]:
         """Calculates free time slots based on busy slots within a range."""
         pass
 
     @abstractmethod
-    async def get_available_time_slots(self, calendar_id: str, preferences: UserPreferences, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    def get_available_time_slots(self, calendar_id: str, preferences: UserPreferences, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
         """Gets available (free) time slots for a given calendar and time range."""
         pass
 
     @abstractmethod
-    async def add_event(
+    def add_event(
             self,
             title: str,
             start_time: datetime,
@@ -101,89 +100,6 @@ class AbstractCalendarClient(ABC):
         """
         pass
 
-    @abstractmethod
-    async def get_events(
-            self,
-            calendar_id: str,
-            start_time: datetime,
-            end_time: datetime,
-            single_events: bool = True,
-            order_by: str = 'startTime',
-            max_results: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get events from the calendar with full details.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            start_time: The start of the query range (timezone-aware)
-            end_time: The end of the query range (timezone-aware)
-            single_events: Whether to expand recurring events
-            order_by: How to order the events
-            max_results: Maximum number of results to return
-
-        Returns:
-            List of event dictionaries with full details
-
-        Raises:
-            CalendarAPIError: If the API call fails
-        """
-        pass
-
-    @abstractmethod
-    async def get_event(self, calendar_id: str, event_id: str) -> Dict[str, Any]:
-        """
-        Get a single event by ID.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            event_id: The event ID
-
-        Returns:
-            Event dictionary with full details
-
-        Raises:
-            CalendarAPIError: If the API call fails or event not found
-        """
-        pass
-
-    @abstractmethod
-    async def update_event(
-            self,
-            calendar_id: str,
-            event_id: str,
-            updates: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Update an existing event.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            event_id: The event ID to update
-            updates: Dictionary of fields to update
-
-        Returns:
-            Updated event dictionary
-
-        Raises:
-            CalendarAPIError: If the API call fails
-        """
-        pass
-
-    @abstractmethod
-    async def delete_event(self, calendar_id: str, event_id: str) -> None:
-        """
-        Delete an event.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            event_id: The event ID to delete
-
-        Raises:
-            CalendarAPIError: If the API call fails
-        """
-        pass
-
 
 # --- Google Calendar API Client Implementation ---
 
@@ -207,10 +123,9 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
         self.scopes = scopes
         self._service: Optional[Resource] = None
         self.logger = logging.getLogger(__name__)  # Setup logging
-        # Thread pool executor for running synchronous Google API calls
-        self._executor = ThreadPoolExecutor(max_workers=5)
 
-    async def authenticate(self) -> None:
+    @property
+    def authenticate(self) -> None:
         """
         Authenticates the user using the provided token information and builds the service object.
 
@@ -223,7 +138,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
             # Build credentials from the access token and refresh token
             credentials = GoogleCredentials(
                 token=self.token_info["access_token"],
-                refresh_token=self.token_info.get("refresh_token"),
+                refresh_token=self.token_info["refresh_token"],
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=None,  # Not required for this flow
                 client_secret=None,  # Not required for this flow
@@ -233,43 +148,34 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
             # Check if the token is expired and refresh if necessary
             if credentials.expired and credentials.refresh_token:
                 self.logger.info("Access token expired. Attempting to refresh...")
-                # Run the synchronous refresh in executor
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(self._executor, credentials.refresh, Request())
+                credentials.refresh(Request())
                 self.logger.info("Access token refreshed successfully.")
             if not credentials.valid:
-                new_token_data = await refresh_google_access_token(self.token_info["app_user_id"])
+                new_token_data = asyncio.run(refresh_google_access_token(self.token_info["app_user_id"]))
                 if new_token_data:
-                    self.logger.info("Token refresh attempted successfully")
+                    self.logger.error("Token refresh attempted successfully")
                     credentials = GoogleCredentials(
                         token=new_token_data["access_token"],
-                        refresh_token=new_token_data.get("refresh_token"),
+                        refresh_token=new_token_data["refresh_token"],
                         token_uri="https://oauth2.googleapis.com/token",
                         client_id=None,  # Not required for this flow
                         client_secret=None,  # Not required for this flow
                         scopes=self.scopes,
                     )
+                    return
                 else:
                     self.logger.error("Token refresh failed or no refresh token available.")
-                    self.logger.error("Invalid credentials. Cannot proceed.")
-                    raise AuthenticationError("Invalid credentials.")
-            
-            # Build the service object in executor
-            loop = asyncio.get_event_loop()
-            self._service = await loop.run_in_executor(
-                self._executor, 
-                build, 
-                'calendar', 
-                'v3', 
-                credentials
-            )
+                self.logger.error("Invalid credentials. Cannot proceed.")
+                raise AuthenticationError("Invalid credentials.")
+            # Build the service object
+            self._service = build('calendar', 'v3', credentials=credentials)
             self.logger.info("Google Calendar API service built successfully.")
 
         except Exception as e:
             self.logger.error(f"Failed to authenticate and build service: {e}")
             raise AuthenticationError(f"Failed to authenticate: {e}") from e
 
-    async def _get_service(self) -> Resource:
+    def _get_service(self) -> Resource:
         """
         Ensures the client is authenticated and returns the service resource.
 
@@ -281,7 +187,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
         """
         if not self._service:
             self.logger.warning("Service not available. Attempting authentication.")
-            await self.authenticate()
+            self.authenticate
             if not self._service:
                 self.logger.critical("Authentication failed, service could not be built.")
                 raise AuthenticationError("Cannot get service resource: Authentication failed or service not built.")
@@ -305,8 +211,20 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
     #         self.logger.error(f"Service account authentication failed: {e}")
     #         raise AuthenticationError(f"Service account authentication failed: {e}") from e
 
+    def _get_service(self) -> Resource:
+        """Ensures the client is authenticated and returns the service resource."""
+        if not self._service:
+            self.logger.warning("Service not available. Attempting authentication.")
+            # Decide which auth method to call by default or based on config
+            self.authenticate  # Defaulting to user OAuth flow
+            # self.authenticate_service_account() # Or use this if service account is the primary method
+            if not self._service: # Check again after attempting auth
+                 self.logger.critical("Authentication failed, service could not be built.")
+                 raise AuthenticationError("Cannot get service resource: Authentication failed or service not built.")
+        return self._service
 
-    async def get_busy_slots(self, calendar_id: str, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    #def get_busy_slots(self, calendar_id: str = 'primary', start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    def get_busy_slots(self, calendar_id: str, start_time: datetime, end_time: datetime) -> List[TimeSlot]:
         """
         Fetches busy time slots from the specified Google Calendar.
 
@@ -328,7 +246,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
         if start_time.tzinfo is None or end_time.tzinfo is None:
              raise ValueError("start_time and end_time must be timezone-aware.")
 
-        service = await self._get_service()
+        service = self._get_service()
         busy_slots = []
         page_token = None
 
@@ -340,20 +258,15 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
 
                 self.logger.debug(f"Calling events.list: calendarId={calendar_id}, timeMin={time_min}, timeMax={time_max}, pageToken={page_token}")
 
-                # Run the synchronous API call in executor
-                loop = asyncio.get_event_loop()
-                events_result = await loop.run_in_executor(
-                    self._executor,
-                    lambda: service.events().list(
-                        calendarId=calendar_id,
-                        timeMin=time_min,
-                        timeMax=time_max,
-                        singleEvents=True, # Expand recurring events
-                        orderBy='startTime',
-                        pageToken=page_token,
-                        # Consider adding maxResults if needed
-                    ).execute()
-                )
+                events_result = service.events().list(
+                    calendarId=calendar_id,
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    singleEvents=True, # Expand recurring events
+                    orderBy='startTime',
+                    pageToken=page_token,
+                    # Consider adding maxResults if needed
+                ).execute()
 
                 events = events_result.get('items', [])
                 self.logger.debug(f"Received {len(events)} events in this page.")
@@ -453,7 +366,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
             raise APICallError(f"An unexpected error occurred: {e}") from e
 
 
-    async def calculate_free_slots(self, busy_slots: List[TimeSlot], start_time: datetime, end_time: datetime) -> List[TimeSlot]:
+    def calculate_free_slots(self, busy_slots: List[TimeSlot], start_time: datetime, end_time: datetime) -> List[TimeSlot]:
         """
         Calculates free time slots based on a sorted list of busy slots.
 
@@ -525,7 +438,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
     #             merged.append(current)
     #     return merged
 
-    async def get_available_time_slots(
+    def get_available_time_slots(
             self,
             preferences: UserPreferences,  # Add UserPreferences as input
             calendar_id: str,
@@ -551,11 +464,11 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
         self.logger.info(f"Getting available time slots for calendar '{calendar_id}' considering preferences.")
 
         # Step 1: Get busy slots from the calendar API
-        calendar_busy_slots = await self.get_busy_slots(calendar_id, start_time, end_time)
+        calendar_busy_slots = self.get_busy_slots(calendar_id, start_time, end_time)
 
         # Step 2: Calculate the raw free slots based on calendar busy times
         # (Uses the calculate_free_slots method already defined in this class)
-        raw_free_slots = await self.calculate_free_slots(calendar_busy_slots, start_time, end_time)
+        raw_free_slots = self.calculate_free_slots(calendar_busy_slots, start_time, end_time)
 
         # Step 3: Filter the raw free slots using user preferences
         filtered_free_slots = filter_slots_by_preferences(raw_free_slots, preferences)
@@ -563,7 +476,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
         self.logger.info(f"Calculated {len(filtered_free_slots)} final available slots after applying preferences.")
         return filtered_free_slots
 
-    async def add_event(
+    def add_event(
             self,
             title: str,
             start_time: datetime,
@@ -593,7 +506,7 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
             CalendarError: If the event creation fails
         """
         try:
-            service = await self._get_service()
+            service = self._get_service()
 
             event = {
                 'summary': title,
@@ -604,224 +517,14 @@ class GoogleCalendarAPIClient(AbstractCalendarClient):
                 'end': {
                     'dateTime': end_time.isoformat(),
                 },
-                'attendees': [{'email': email} for email in (attendees or [])],
+                'attendees': [],
             }
-            
-            if location:
-                event['location'] = location
-                
-            # Run the synchronous API call in executor
-            loop = asyncio.get_event_loop()
-            created_event = await loop.run_in_executor(
-                self._executor,
-                lambda: service.events().insert(calendarId='primary', body=event).execute()
-            )
-            
-            self.logger.info(f"Successfully created event: {created_event.get('id')}")
+            created_event = service.events().insert(calendarId='primary', body=event).execute()
             return created_event
-        except HttpError as error:
-            self.logger.error(f"An API error occurred while creating event: {error}")
-            raise APICallError(f"Failed to create event: {error}") from error
         except Exception as e:
-            self.logger.exception(f"An unexpected error occurred while creating event: {e}")
-            raise APICallError(f"An unexpected error occurred: {e}") from e
-
-    async def get_events(
-            self,
-            calendar_id: str,
-            start_time: datetime,
-            end_time: datetime,
-            single_events: bool = True,
-            order_by: str = 'startTime',
-            max_results: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get events from the calendar with full details.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            start_time: The start of the query range (timezone-aware)
-            end_time: The end of the query range (timezone-aware)
-            single_events: Whether to expand recurring events
-            order_by: How to order the events
-            max_results: Maximum number of results to return
-
-        Returns:
-            List of event dictionaries with full details
-
-        Raises:
-            CalendarAPIError: If the API call fails
-        """
-        self.logger.info(f"Getting events from calendar '{calendar_id}' from {start_time} to {end_time}")
-        
-        if start_time.tzinfo is None or end_time.tzinfo is None:
-            raise ValueError("start_time and end_time must be timezone-aware.")
-        
-        service = await self._get_service()
-        all_events = []
-        page_token = None
-        
-        try:
-            while True:
-                # Build request parameters
-                request_params = {
-                    'calendarId': calendar_id,
-                    'timeMin': start_time.isoformat(),
-                    'timeMax': end_time.isoformat(),
-                    'singleEvents': single_events,
-                    'orderBy': order_by,
-                    'pageToken': page_token
-                }
-                
-                if max_results:
-                    request_params['maxResults'] = max_results
-                
-                # Run the synchronous API call in executor
-                loop = asyncio.get_event_loop()
-                events_result = await loop.run_in_executor(
-                    self._executor,
-                    lambda: service.events().list(**request_params).execute()
-                )
-                
-                events = events_result.get('items', [])
-                all_events.extend(events)
-                
-                page_token = events_result.get('nextPageToken')
-                if not page_token or (max_results and len(all_events) >= max_results):
-                    break
-            
-            self.logger.info(f"Successfully retrieved {len(all_events)} events.")
-            return all_events[:max_results] if max_results else all_events
-            
-        except HttpError as error:
-            self.logger.error(f"An API error occurred while getting events: {error}")
-            raise APICallError(f"Failed to get events: {error}") from error
-        except Exception as e:
-            self.logger.exception(f"An unexpected error occurred while getting events: {e}")
-            raise APICallError(f"An unexpected error occurred: {e}") from e
-
-    async def get_event(self, calendar_id: str, event_id: str) -> Dict[str, Any]:
-        """
-        Get a single event by ID.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            event_id: The event ID
-
-        Returns:
-            Event dictionary with full details
-
-        Raises:
-            CalendarAPIError: If the API call fails or event not found
-        """
-        try:
-            service = await self._get_service()
-            
-            # Run the synchronous API call in executor
-            loop = asyncio.get_event_loop()
-            event = await loop.run_in_executor(
-                self._executor,
-                lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-            )
-            
-            self.logger.info(f"Successfully retrieved event: {event_id}")
-            return event
-            
-        except HttpError as error:
-            if error.resp.status == 404:
-                raise APICallError(f"Event with ID '{event_id}' not found") from error
-            self.logger.error(f"An API error occurred while getting event: {error}")
-            raise APICallError(f"Failed to get event: {error}") from error
-        except Exception as e:
-            self.logger.exception(f"An unexpected error occurred while getting event: {e}")
-            raise APICallError(f"An unexpected error occurred: {e}") from e
-
-    async def update_event(
-            self,
-            calendar_id: str,
-            event_id: str,
-            updates: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Update an existing event.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            event_id: The event ID to update
-            updates: Dictionary of fields to update
-
-        Returns:
-            Updated event dictionary
-
-        Raises:
-            CalendarAPIError: If the API call fails
-        """
-        try:
-            service = await self._get_service()
-            
-            # First get the existing event
-            existing_event = await self.get_event(calendar_id, event_id)
-            
-            # Merge updates with existing event
-            updated_event = {**existing_event, **updates}
-            
-            # Run the synchronous API call in executor
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                self._executor,
-                lambda: service.events().update(
-                    calendarId=calendar_id,
-                    eventId=event_id,
-                    body=updated_event
-                ).execute()
-            )
-            
-            self.logger.info(f"Successfully updated event: {event_id}")
-            return result
-            
-        except APICallError:
-            raise
-        except HttpError as error:
-            self.logger.error(f"An API error occurred while updating event: {error}")
-            raise APICallError(f"Failed to update event: {error}") from error
-        except Exception as e:
-            self.logger.exception(f"An unexpected error occurred while updating event: {e}")
-            raise APICallError(f"An unexpected error occurred: {e}") from e
-
-    async def delete_event(self, calendar_id: str, event_id: str) -> None:
-        """
-        Delete an event.
-
-        Args:
-            calendar_id: Identifier of the calendar
-            event_id: The event ID to delete
-
-        Raises:
-            CalendarAPIError: If the API call fails
-        """
-        try:
-            service = await self._get_service()
-            
-            # Run the synchronous API call in executor
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                self._executor,
-                lambda: service.events().delete(
-                    calendarId=calendar_id,
-                    eventId=event_id
-                ).execute()
-            )
-            
-            self.logger.info(f"Successfully deleted event: {event_id}")
-            
-        except HttpError as error:
-            if error.resp.status == 404:
-                raise APICallError(f"Event with ID '{event_id}' not found") from error
-            self.logger.error(f"An API error occurred while deleting event: {error}")
-            raise APICallError(f"Failed to delete event: {error}") from error
-        except Exception as e:
-            self.logger.exception(f"An unexpected error occurred while deleting event: {e}")
-            raise APICallError(f"An unexpected error occurred: {e}") from e
+            # Log the error or handle it appropriately
+            print(f"An error occurred while creating the event: {e}")
+            return None
 
 
 
