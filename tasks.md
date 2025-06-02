@@ -11,4 +11,6 @@ Tasks
 9) Gemini must have a way to handle a context per user 
 10) Gemini must respond in french
 11) Gemini must know user preferences about timezones, language, and other settings
-
+12) in orchestration_service.py, we need to update the handle_chat_request method.
+    - We need to remove this condition "while current_turn < turn_limit:" . In fact we need to continue querying gemini until we get a final response. If it is a function call, we need to execute the function and then continue querying gemini until we get a final response.
+13) I found the current python files too long, we need to split them in smaller files. Don't forget to update the imports. Don't modify the functionality of the code, just split the files.
