@@ -29,7 +29,7 @@ from calendar_client import AbstractCalendarClient
 import threading
 from settings_v1 import settings
 # Import the tool execution result persistence function
-from dynamodb import save_tool_execution_result
+from db import save_tool_execution_result
 
 class GenAIClientSingleton:
     _instance = None
@@ -75,7 +75,18 @@ class AbstractGeminiClient:
         # Configure the request payload
 
         tools = types.Tool(function_declarations=request.tools)
-        config = types.GenerateContentConfig(tools=[tools])
+        
+        # Add system instruction for French responses
+        system_instruction = """Tu es un assistant IA qui aide à gérer le calendrier et les tâches. 
+Tu DOIS TOUJOURS répondre en français, peu importe la langue dans laquelle l'utilisateur écrit.
+Sois poli, professionnel et utile dans tes réponses.
+Utilise le vouvoiement (vous) sauf si l'utilisateur te demande explicitement de le tutoyer."""
+        
+        config = types.GenerateContentConfig(
+            tools=[tools],
+            system_instruction=system_instruction
+        )
+        
         payload = {
             "model": "gemini-2.0-flash",
             "contents": [turn.parts[0] for turn in request.history],

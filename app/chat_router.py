@@ -11,7 +11,7 @@ from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
 from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
 from models import ChatRequest, ChatResponse, ErrorDetail
-from dynamodb import get_decrypted_user_tokens
+from db import get_decrypted_user_tokens
 from core.security import verify_token as jwt_verify_token
 
 from mangum import Mangum

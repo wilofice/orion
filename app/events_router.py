@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field
 
 from calendar_client import GoogleCalendarAPIClient
-from dynamodb import get_decrypted_user_tokens
+from db import get_decrypted_user_tokens
 from models import TimeSlot
 from zoneinfo import ZoneInfo
 from core.security import verify_token

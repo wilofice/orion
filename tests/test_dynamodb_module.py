@@ -1,6 +1,6 @@
 import pytest
 from cryptography.exceptions import InvalidTag
-from app import dynamodb
+from app import db as dynamodb  # Aliased for backward compatibility
 
 
 def test_encrypt_decrypt_roundtrip():

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 # Attempt to import ConversationTurn from gemini_interface
 from gemini_interface import ConversationTurn, ConversationRole
 from settings_v1 import settings
-from dynamodb import get_dynamodb_resource
+from db import get_dynamodb_resource
 
 logger = logging.getLogger(__name__)
 

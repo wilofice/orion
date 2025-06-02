@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 
 from gemini_interface import ConversationTurn, ConversationRole
-from dynamodb import get_user_conversations
+from db import get_user_conversations
 from pydantic import BaseModel
 from core.security import verify_token
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
 from core.security import verify_token
-from dynamodb import (
+from db import (
     get_tool_execution_results_by_session,
     get_tool_execution_results_by_user,
     get_tool_execution_statistics

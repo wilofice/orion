@@ -6,8 +6,12 @@ import uuid
 import json
 import base64
 
-from dynamodb import save_user_tokens, get_decrypted_user_tokens, delete_user_tokens, \
-    refresh_google_access_token, encrypt_token, decrypt_token, get_user_id_by_email, save_user_email_mapping
+from db import (
+    save_user_tokens, get_decrypted_user_tokens, delete_user_tokens,
+    encrypt_token, decrypt_token, get_user_id_by_email, save_user_email_mapping
+)
+# TODO: Move refresh_google_access_token from dynamodb to appropriate module
+from dynamodb import refresh_google_access_token
 from settings_v1 import settings
 from core.security import create_access_token, get_current_user
 from pydantic import (BaseModel, Field, field_validator,

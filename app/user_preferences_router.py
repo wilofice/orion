@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from fastapi import APIRouter, HTTPException, status, Body, Depends
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from dynamodb import (
+from db import (
     save_user_preferences,
     get_user_preferences,
     update_user_preferences,
