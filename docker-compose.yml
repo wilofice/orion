@@ -1,0 +1,170 @@
+version: '3.8'
+
+services:
+  # DynamoDB Local for development
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: orion-dynamodb-local
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    working_dir: /home/dynamodblocal
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # DynamoDB Admin (optional - web UI for DynamoDB)
+  dynamodb-admin:
+    image: aaronshaf/dynamodb-admin:latest
+    container_name: orion-dynamodb-admin
+    ports:
+      - "8001:8001"
+    environment:
+      - DYNAMO_ENDPOINT=http://dynamodb-local:8000
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - orion-network
+
+  # Main Application
+  orion-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: orion-api
+    ports:
+      - "8080:8080"
+    environment:
+      # Application settings
+      - PROJECT_NAME=AI Calendar Events Manager Backend
+      - API_V1_STR=/api/v1
+      
+      # AWS/DynamoDB settings for local development
+      - AWS_REGION=eu-north-1
+      - AWS_DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000
+      - AWS_ACCESS_KEY_ID=dummy
+      - AWS_SECRET_ACCESS_KEY=dummy
+      
+      # DynamoDB table names
+      - DYNAMODB_USER_TOKENS_TABLE_NAME=UserGoogleTokens
+      - DYNAMODB_CHAT_SESSIONS_TABLE_NAME=ChatSessions
+      - DYNAMODB_USER_PREFERENCES_TABLE_NAME=UserPreferences
+      - DYNAMODB_USER_TASKS_TABLE_NAME=UserTasks
+      - DYNAMODB_USER_EMAIL_MAPPING_TABLE_NAME=UserEmailMapping
+      - DYNAMODB_TOOL_EXECUTION_RESULTS_TABLE_NAME=ToolExecutionResults
+      
+      # Security settings (use environment variables or .env file for production)
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-jwt-secret-key-change-in-production}
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - ENCRYPTION_KEY_HEX=${ENCRYPTION_KEY_HEX:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      
+      # Google OAuth settings (set these in .env file)
+      - GOOGLE_CLIENT_ID_IOS=${GOOGLE_CLIENT_ID_IOS}
+      - GOOGLE_CLIENT_ID_ANDROID=${GOOGLE_CLIENT_ID_ANDROID}
+      - GOOGLE_TOKEN_URL=https://oauth2.googleapis.com/token
+      
+      # AI API settings
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      
+    volumes:
+      - ./app:/app:ro  # Mount app directory for hot reloading in development
+      - ./logs:/app/logs  # Mount logs directory
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - orion-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Database initialization service
+  db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: orion-db-init
+    environment:
+      - AWS_REGION=eu-north-1
+      - AWS_DYNAMODB_ENDPOINT_URL=http://dynamodb-local:8000
+      - AWS_ACCESS_KEY_ID=dummy
+      - AWS_SECRET_ACCESS_KEY=dummy
+      - DYNAMODB_USER_TOKENS_TABLE_NAME=UserGoogleTokens
+      - DYNAMODB_CHAT_SESSIONS_TABLE_NAME=ChatSessions
+      - DYNAMODB_USER_PREFERENCES_TABLE_NAME=UserPreferences
+      - DYNAMODB_USER_TASKS_TABLE_NAME=UserTasks
+      - DYNAMODB_USER_EMAIL_MAPPING_TABLE_NAME=UserEmailMapping
+      - DYNAMODB_TOOL_EXECUTION_RESULTS_TABLE_NAME=ToolExecutionResults
+    command: python -c "
+      import sys; sys.path.append('/app');
+      from db import (
+        create_user_tokens_table,
+        create_chat_sessions_table, 
+        create_user_preferences_table,
+        create_user_tasks_table,
+        create_user_email_mapping_table,
+        create_tool_execution_results_table
+      );
+      import time;
+      print('Waiting for DynamoDB to be ready...');
+      time.sleep(10);
+      print('Creating tables...');
+      create_user_tokens_table();
+      create_chat_sessions_table();
+      create_user_preferences_table();
+      create_user_tasks_table();
+      create_user_email_mapping_table();
+      create_tool_execution_results_table();
+      print('All tables created successfully!');
+      "
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - orion-network
+    restart: "no"
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: orion-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # Mount SSL certificates if needed
+    depends_on:
+      orion-api:
+        condition: service_healthy
+    networks:
+      - orion-network
+    restart: unless-stopped
+    profiles:
+      - nginx  # Optional service, use: docker-compose --profile nginx up
+
+volumes:
+  dynamodb-data:
+    driver: local
+  logs:
+    driver: local
+
+networks:
+  orion-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
