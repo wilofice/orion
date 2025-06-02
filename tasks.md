@@ -14,3 +14,11 @@ Tasks
 12) in orchestration_service.py, we need to update the handle_chat_request method.
     - We need to remove this condition "while current_turn < turn_limit:" . In fact we need to continue querying gemini until we get a final response. If it is a function call, we need to execute the function and then continue querying gemini until we get a final response.
 13) I found the current python files too long, we need to split them in smaller files. Don't forget to update the imports. Don't modify the functionality of the code, just split the files.
+14) Our current api is relying heavily on google calendar api. 
+    - We need to implement the handling of the user's calendar in a way that will allow us to use any calendar service in the futur. 
+15) Currently, our AI calendar tools are not handling attendees other than the user. 
+    - We need to implement the handling of attendees in a way that will allow us to add attendees to events and meetings.
+16) We are heavivly relying on Gemini for our AI capabilities. We need to implement a mechanism to handle using different AI services (openapi, claude, etc) depending on a parameter (model of choice) in settings.
+    - We need to implement a fallback mechanism to handle cases where Gemini is not available or fails to respond. 
+    - This will ensure that our application remains functional even in the event of a service outage or failure.
+- 
