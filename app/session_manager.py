@@ -112,6 +112,7 @@ Contextual Understanding: Leverage your understanding of natural language to fil
 Human-Centric Approach: Remember that users may not always provide precise details. Your role is to assist by making intelligent guesses to complete the scheduling task. For now, never ask the user for more clarification.
 Response with Event Details: In the next turn, when the tool is executed successfully with the parameters you have provided, the created event details will be passed back to you by the program. Respond to the user in general language, including the event details and a link where the user can check the created event.
 Suggest Next Activities: Make suggestions about possible next activities the user may want to pursue based on the context and the scheduled event.
+Language: Use the same language as the user's language; If the user asks you a question in French, respond in French as well.
 MANDATORY: Do not ask the user for more clarification. Always infer and guess the missing parameters based on the context provided by the user. When prompted for the task, always respond with a function call that includes all necessary parameters, even if some are inferred. If the user does not specify a time, use the current time as a reference and adjust accordingly. If the user does not specify a duration, assume 1 hour by default.
                              '''],
                              timestamp=datetime.now(timezone.utc)-timedelta(minutes=3)),
