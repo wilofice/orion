@@ -20,5 +20,6 @@ Tasks
     - We need to implement the handling of attendees in a way that will allow us to add attendees to events and meetings.
 16) We are heavivly relying on Gemini for our AI capabilities. We need to implement a mechanism to handle using different AI services (openapi, claude, etc) depending on a parameter (model of choice) in settings.
     - We need to implement a fallback mechanism to handle cases where Gemini is not available or fails to respond. 
-    - This will ensure that our application remains functional even in the event of a service outage or failure.
-- 
+    - This will ensure that our application remains functional even in the event of a service outage or failure
+17) Add a docker compose file to run the application with all its dependencies, including the database (dynamodb => for that , you need to check localdb/docker-compose) and any other services it relies on. 
+    - This will allow us to easily deploy and run the application in a consistent environment.
