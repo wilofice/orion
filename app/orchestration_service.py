@@ -220,7 +220,7 @@ TOOL_DEFINITIONS: List[ToolDefinition] = [
 logger = logging.getLogger(__name__)
 
 # Configuration
-MAX_GEMINI_TURNS = 2 # Limit LLM calls per user prompt (User -> LLM -> Tool -> LLM -> User)
+# Removed MAX_GEMINI_TURNS - now we continue until final response with safety limit of 50 iterations
 
 async def handle_chat_request(
     request: ChatRequest,
@@ -245,8 +245,8 @@ async def handle_chat_request(
     session_id = request.session_id or str(uuid.uuid4())
     user_id = request.user_id
     prompt_text = request.prompt_text
-    turn_limit = MAX_GEMINI_TURNS
-    current_turn = 0
+    max_iterations = 50  # Safety limit to prevent infinite loops
+    current_iteration = 0
 
     try:
         # 8.1 Authentication: Assumed done by FastAPI dependency before calling this handler.
@@ -270,9 +270,15 @@ async def handle_chat_request(
         # 8.3 Get available tools (replace DUMMY with actual registry access)
         available_tools = TOOL_DEFINITIONS # Task ORCH-7
 
-        while current_turn < turn_limit:
-            current_turn += 1
-            logger.info(f"[Session: {session_id}] Gemini Turn {current_turn}/{turn_limit}")
+        while True:  # Continue until we get a final response
+            current_iteration += 1
+            
+            # Safety check to prevent infinite loops
+            if current_iteration > max_iterations:
+                logger.error(f"[Session: {session_id}] Reached maximum iteration limit ({max_iterations}). Breaking loop.")
+                break
+                
+            logger.info(f"[Session: {session_id}] Gemini Iteration {current_iteration}")
 
             # 8.4 Build request and send to Gemini
             gemini_request = GeminiRequest(history=history, tools=available_tools)
@@ -376,7 +382,7 @@ async def handle_chat_request(
                 await session_manager.append_turn(session_id, function_response_turn) # Persist tool result turn
 
                 # 8.6.3 & 8.6.4 - Loop back to call Gemini again with the tool result included in history
-                # The loop condition (current_turn < turn_limit) handles this.
+                # The loop will continue until Gemini provides a final text response
                 continue # Go to the next iteration of the while loop
 
             # Handle ERROR response from Gemini Client
@@ -393,8 +399,8 @@ async def handle_chat_request(
                  logger.error(f"[Session: {session_id}] Received unexpected response type from Gemini Client: {gemini_response.response_type}")
                  raise ValueError("Unexpected Gemini response type")
 
-        # If loop finishes without returning (hit turn limit)
-        logger.warning(f"[Session: {session_id}] Reached maximum Gemini turn limit ({turn_limit}).")
+        # If loop finishes without returning (hit iteration limit)
+        logger.warning(f"[Session: {session_id}] Reached maximum iteration limit ({max_iterations}).")
         # Return last known state or generic error/clarification
         # Check the last turn in history
         last_turn = history[-1] if history else None
@@ -403,13 +409,13 @@ async def handle_chat_request(
              return ChatResponse(
                  session_id=session_id,
                  status=ResponseStatus.ERROR,
-                 response_text="Sorry, I couldn't complete the request after processing the information. Please try rephrasing."
+                 response_text="Sorry, I couldn't complete the request after processing the information. The system reached its safety limit. Please try rephrasing your request."
              )
         # Fallback generic message
         return ChatResponse(
             session_id=session_id,
             status=ResponseStatus.ERROR,
-            response_text="Sorry, the request took too many steps to process. Please try simplifying your request."
+            response_text="Sorry, the request required too many processing steps and reached the safety limit. Please try simplifying your request."
         )
 
     except Exception as e:
