@@ -245,7 +245,7 @@ async def handle_chat_request(
     session_id = request.session_id or str(uuid.uuid4())
     user_id = request.user_id
     prompt_text = request.prompt_text
-    max_iterations = 50  # Safety limit to prevent infinite loops
+    max_iterations = 5  # Safety limit to prevent infinite loops
     current_iteration = 0
 
     try:
