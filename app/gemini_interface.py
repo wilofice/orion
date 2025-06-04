@@ -20,6 +20,7 @@ class ConversationRole(str, Enum):
     USER = "USER"
     SYSTEM = "SYSTEM"  # Optional, for system messages or instructions
     MODEL = "AI"
+    FUNCTION = "FUNCTION"
     # Represents the result of a function call requested by the model
     FUNCTION_CALL = "FUNCTION_CALL" # Changed from TOOL to match Gemini API
     FUNCTION_RESULT = "FUNCTION_RESULT" # Changed from TOOL to match Gemini API
@@ -79,11 +80,11 @@ class ConversationTurn(BaseModel):
 
     @classmethod
     def model_turn_function_call(cls, function_call: FunctionCall) -> 'ConversationTurn':
-        return cls(role=ConversationRole.FUNCTION_CALL, parts=[f"AI FUNCTION CALL: {function_call.model_dump_json()}"])
+        return cls(role=ConversationRole.MODEL, parts=[f"AI FUNCTION CALL: {function_call.model_dump_json()}"])
 
     @classmethod
     def function_turn(cls, tool_result: ToolResult) -> 'ConversationTurn':
-        return cls(role=ConversationRole.FUNCTION_RESULT, parts=[f"FUNCTION RESULT: {tool_result.model_dump_json()}"])
+        return cls(role=ConversationRole.FUNCTION, parts=[f"FUNCTION RESULT: {tool_result.model_dump_json()}"])
 
 
 # Placeholder for ToolDefinition - should match Gemini API's FunctionDeclaration

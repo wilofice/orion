@@ -4,8 +4,8 @@ from typing import List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field
 
-from calendar_client import GoogleCalendarAPIClient
-from db import get_decrypted_user_tokens
+from calendar_client import AbstractCalendarClient
+from app.services import get_calendar_client_for_user as service_get_calendar_client_for_user
 from models import TimeSlot
 from zoneinfo import ZoneInfo
 from core.security import verify_token
@@ -43,39 +43,9 @@ class EventsResponse(BaseModel):
 
 
 # --- Helper Functions ---
-async def get_calendar_client_for_user(user_id: str) -> GoogleCalendarAPIClient:
-    """
-    Creates a Google Calendar client for a specific user.
-    
-    Args:
-        user_id: The user ID to get calendar client for
-        
-    Returns:
-        GoogleCalendarAPIClient instance
-        
-    Raises:
-        HTTPException: If user tokens are not found or invalid
-    """
-    # Get user tokens from DynamoDB
-    tokens = get_decrypted_user_tokens(user_id)
-    
-    if not tokens or 'access_token' not in tokens:
-        logger.error(f"No valid tokens found for user {user_id}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User tokens not found or invalid. Please reconnect Google Calendar."
-        )
-    
-    # Create calendar client with the user's tokens
-    try:
-        client = GoogleCalendarAPIClient(token_info=tokens)
-        return client
-    except Exception as e:
-        logger.error(f"Failed to create calendar client for user {user_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initialize calendar client"
-        )
+async def get_calendar_client_for_user(user_id: str) -> AbstractCalendarClient:
+    """Return a calendar client for the given user."""
+    return service_get_calendar_client_for_user(user_id)
 
 
 def convert_timeslot_to_event(slot: TimeSlot, event_data: Dict[str, Any]) -> CalendarEvent:
