@@ -23,3 +23,5 @@ Tasks
     - This will ensure that our application remains functional even in the event of a service outage or failure
 17) Add a docker compose file to run the application with all its dependencies, including the database (dynamodb => for that , you need to check localdb/docker-compose) and any other services it relies on. 
     - This will allow us to easily deploy and run the application in a consistent environment.
+18) the docker-compose up -d is working well. the docker container is being created but I can't access my api from my machine when I go to localhost:8080/Prod/docs. Can you tell why ?
+19) We are evolving the api to handle voice messages.

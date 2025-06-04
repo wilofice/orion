@@ -45,7 +45,7 @@ services:
     environment:
       # Application settings
       - PROJECT_NAME=AI Calendar Events Manager Backend
-      - API_V1_STR=/api/v1
+      - API_V1_STR=
       
       # AWS/DynamoDB settings for local development
       - AWS_REGION=eu-north-1
