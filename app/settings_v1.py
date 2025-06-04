@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     GOOGLE_TOKEN_URL: str = "https://oauth2.googleapis.com/token"
     GEMINI_API_KEY: str = "your-gemini-api-key"  # Ensure this is set in your .env file
+    CALENDAR_PROVIDER: str = "google"  # Allows switching calendar backend in the future
 
     # Derived property for the actual encryption key bytes
     @property

@@ -40,12 +40,28 @@ async def list_user_conversations(
             # Filter to only include USER and AI (MODEL) messages
             filtered_turns = []
             for turn in item.get("history", []):
-                turn_obj = ConversationTurn(**turn)
+                try:
+                    turn_obj = ConversationTurn(**turn)
+                except Exception:
+                    # Skip entries with invalid data
+                    continue
                 if turn_obj.role == ConversationRole.USER:
-                    turn_obj.parts = [part.split("USER: ")[1] for part in turn_obj.parts if isinstance(part, str)]
+                    cleaned_parts = []
+                    for part in turn_obj.parts:
+                        if isinstance(part, str) and part.startswith("USER: "):
+                            cleaned_parts.append(part.split("USER: ", 1)[1])
+                        elif isinstance(part, str):
+                            cleaned_parts.append(part)
+                    turn_obj.parts = cleaned_parts
                     filtered_turns.append(turn_obj)
                 if turn_obj.role == ConversationRole.MODEL:
-                    turn_obj.parts = [part.split("AI: ")[1] for part in turn_obj.parts if isinstance(part, str)]
+                    cleaned_parts = []
+                    for part in turn_obj.parts:
+                        if isinstance(part, str) and part.startswith("AI: "):
+                            cleaned_parts.append(part.split("AI: ", 1)[1])
+                        elif isinstance(part, str):
+                            cleaned_parts.append(part)
+                    turn_obj.parts = cleaned_parts
                     filtered_turns.append(turn_obj)
             
             conversations.append(

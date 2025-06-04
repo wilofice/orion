@@ -9,9 +9,9 @@ from orchestration_service import handle_chat_request
 from session_manager import AbstractSessionManager, DynamoSessionManager
 from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
-from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
+from calendar_client import AbstractCalendarClient
+from app.services import get_calendar_client_for_user as service_get_calendar_client_for_user
 from models import ChatRequest, ChatResponse, ErrorDetail
-from db import get_decrypted_user_tokens
 from core.security import verify_token as jwt_verify_token
 
 from mangum import Mangum
@@ -59,18 +59,14 @@ def get_tool_executor() -> AbstractToolExecutor:
     return AbstractToolExecutor()
 
 
-def get_calendar_client(email: str) -> AbstractCalendarClient:
-    """Create a Google calendar client for the given user."""
-    # In production this would likely use OAuth credentials stored for
-    # the user.  When running the tests we simply construct the client
-    # with whatever dummy data is available.
-    logger.warning("Using dummy GoogleCalendarAPIClient instance")
+def get_calendar_client(user_id: str) -> AbstractCalendarClient:
+    """Return a calendar client for the given user."""
     try:
-        scopes = ["https://www.googleapis.com/auth/calendar"]
-        decrypted_tokens = get_decrypted_user_tokens(email)
-        return GoogleCalendarAPIClient(decrypted_tokens, scopes)
+        return service_get_calendar_client_for_user(user_id)
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to instantiate GoogleCalendarAPIClient: {e}")
+        logger.error(f"Failed to instantiate calendar client: {e}")
         raise HTTPException(status_code=503, detail="Calendar service client unavailable.")
 
 # --- Pydantic Schemas (Task 3.2, 3.3, 3.4) ---
@@ -125,7 +121,6 @@ async def process_chat_prompt(
     Handles incoming user chat prompts by calling the core orchestration logic
     with injected dependencies.
     """
-    calendar_client = get_calendar_client(request.user_id)
     logger.info(f"API Endpoint: Received chat prompt for user: {request.user_id}, session: {request.session_id}")
 
     # --- Authorization Check (Optional but Recommended) ---
@@ -138,6 +133,8 @@ async def process_chat_prompt(
             detail="User ID mismatch - cannot process request for another user."
         )
     logger.info(f"User '{user_id_from_token}' authorized.")
+
+    calendar_client = get_calendar_client(request.user_id)
 
     # --- Call the core orchestration logic ---
     try:

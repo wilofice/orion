@@ -18,7 +18,7 @@ from models import WantToDoActivity, TimeSlot, ActivityCategory, ActivityStatus,
 # Core logic functions (conceptual imports)
 from scheduler_logic import schedule_want_to_do_basic, ConflictInfo # Need ConflictInfo if handling conflicts here
 # Calendar client interface (needed from context)
-from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
+from calendar_client import AbstractCalendarClient
 
 # --- Abstract Base Class for Tool Wrappers (Task 6.1) ---
 
