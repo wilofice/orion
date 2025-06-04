@@ -53,3 +53,5 @@ behaviour of routers and the orchestration service.
 - Use dependency injection throughout to simplify configuration and testing.
 - Implement asynchronous calendar operations to improve throughput.
 - Persist user preferences and tool execution results in dedicated tables.
+
+## Docker Setup: docker-compose up -d --build
