@@ -107,6 +107,8 @@ Accept: application/json
 
 ### 2. Save Preferences (POST)
 
+**Behavior:** The POST endpoint creates new preferences or completely replaces existing preferences if they already exist. This ensures idempotent behavior where the frontend can always use POST to set the user's preferences to a known state.
+
 **Request:**
 ```http
 POST /preferences/{userId}
@@ -128,7 +130,34 @@ Content-Type: application/json
 }
 ```
 
-**Response:** Status 200-299 indicates success
+**Response (200 OK):**
+```json
+{
+  "user_id": "user123",
+  "time_zone": "America/New_York",
+  "working_hours": {
+    "monday": {"start": "09:00", "end": "17:00"}
+  },
+  "preferred_meeting_times": [],
+  "days_off": ["saturday", "sunday"],
+  "preferred_break_duration_minutes": 15,
+  "work_block_max_duration_minutes": 90,
+  "preferred_activity_durations": {},
+  "energy_levels": {},
+  "social_preferences": {},
+  "rest_preferences": {},
+  "input_mode": "both",
+  "voice_button_position": "right",
+  "created_at": 1704067200000,
+  "updated_at": 1704153600000
+}
+```
+
+**Note:** When preferences already exist, they are completely replaced (not merged) with the new data provided in the request.
+
+### 3. Update Preferences (PUT) - Backend Only
+
+**Note:** The backend also provides a PUT endpoint at `/preferences/{userId}` for partial updates, where only the fields provided in the request are updated. However, the Flutter frontend currently uses only the POST endpoint for all preference updates, ensuring a consistent state by always sending the complete preference object.
 
 ## Implementation Details
 
@@ -161,8 +190,9 @@ flowchart:
 
 1. **Immediate Cache**: Always saves to local cache first
 2. **Network Check**: Only syncs if online and authenticated
-3. **Fire-and-forget**: Backend sync is non-blocking
-4. **Silent Failure**: Network errors don't affect user experience
+3. **Complete Replacement**: Backend POST replaces entire preference object (not merged)
+4. **Fire-and-forget**: Backend sync is non-blocking
+5. **Silent Failure**: Network errors don't affect user experience
 
 ### Caching Strategy
 

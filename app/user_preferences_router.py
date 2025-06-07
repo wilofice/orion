@@ -256,19 +256,22 @@ async def create_user_preferences(
     current_user_id: str = Depends(verify_token)
 ) -> PreferencesResponse:
     """
-    Create new user preferences.
+    Create or replace user preferences.
+    
+    If preferences already exist for the user, they will be completely replaced
+    with the new preferences provided in the request.
     
     Args:
-        user_id: The user ID to create preferences for
+        user_id: The user ID to create/replace preferences for
         request: The preferences data
         
     Returns:
-        PreferencesResponse with created preferences
+        PreferencesResponse with created/replaced preferences
         
     Raises:
-        HTTPException: If preferences already exist or creation fails
+        HTTPException: If creation/replacement fails
     """
-    logger.info(f"Creating preferences for user {user_id}")
+    logger.info(f"Creating/replacing preferences for user {user_id}")
     
     # Verify that the authenticated user can only create their own preferences
     if current_user_id != user_id:
@@ -278,13 +281,18 @@ async def create_user_preferences(
             detail="You can only create your own preferences"
         )
     
-    # Check if preferences already exist
+    # Check if preferences already exist - if they do, we'll replace them
     existing = get_user_preferences(user_id)
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Preferences already exist for user {user_id}. Use PUT to update."
-        )
+        logger.info(f"Preferences already exist for user {user_id}. Replacing with new preferences.")
+        # Delete existing preferences first to ensure clean replacement
+        delete_result = delete_user_preferences(user_id)
+        if not delete_result:
+            logger.error(f"Failed to delete existing preferences for user {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to replace existing preferences"
+            )
     
     # Validate user_id matches
     if request.user_id != user_id:
