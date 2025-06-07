@@ -310,11 +310,15 @@ async def create_user_preferences(
             'user_id': user_id,
             'time_zone': request.time_zone,
             'working_hours': working_hours,
-            'days_off': [date.fromisoformat(d) for d in (request.days_off or [])],
-            'preferred_break_duration': timedelta(minutes=request.preferred_break_duration_minutes),
-            'work_block_max_duration': timedelta(minutes=request.work_block_max_duration_minutes)
+            'days_off': [date.fromisoformat(d) for d in (request.days_off or [])]
         }
-        
+
+        if request.preferred_break_duration_minutes > 0:
+            preferences_data.update({'preferred_break_duration' : timedelta(minutes=request.preferred_break_duration_minutes)})
+
+        if request.work_block_max_duration_minutes > 0:
+            preferences_data.update({'work_block_max_duration' : timedelta(minutes=request.work_block_max_duration)})
+
         # Add optional fields
         if request.preferred_meeting_times:
             preferences_data['preferred_meeting_times'] = [
