@@ -24,4 +24,12 @@ Tasks
 17) Add a docker compose file to run the application with all its dependencies, including the database (dynamodb => for that , you need to check localdb/docker-compose) and any other services it relies on. 
     - This will allow us to easily deploy and run the application in a consistent environment.
 18) the docker-compose up -d is working well. the docker container is being created but I can't access my api from my machine when I go to localhost:8080/Prod/docs. Can you tell why ?
-19) We are evolving the api to handle voice messages.
+19) We are evolving the api to handle voice messages. In file 'chat_service_backend_interaction.md', there is a description of how the interaction between the front (flutter-based app) and the current backend-api should work. Your task is to make sure, the backend-api is designed according to the document. Basically we need to implement the following:
+    - Add support for audio messages Url in the ChatRequest send by the client on the route `/promt` in chat_router.py
+    - Add support for audio messages Url in the conversation history send to the client on the route `/{user_id}` in conversation_router.py
+    - Provide testing recommendations for audio url messages handling.
+    - Consider future enhancements for audio message processing.
+You need to know this : the audio are stored in S3 and the url is provided to the client. The client will use this url to play the audio message. The client is the one recording the audio message and sending the audio URL (along with the audio transcript) to the backend-api (/prompt) after saving that to amazon S3 bucket. The audio URL is then stored in the conversation history and sent back to the client when retrieving the conversation history. The rôle of the backend is to make sure the audio url are saved correctly so that later it can return that information later. It doesn't change how the backend api should work, it just adds support for audio messages in the existing flow. The backend should not handle the audio recording or playback, it just needs to store and retrieve the audio URLs and transcripts as part of the conversation history. If the user send an  audio message, it just means the transcript of the audio represents the user request and the AI response will be based on that transcript.
+    - The audio message is just a part of the conversation history, it doesn't change the way the conversation is handled.
+    - The audio message is just a way to send the user request, it doesn't change the way the AI response is generated.
+    - The audio message is just a way to send the user request, it doesn't change the way the conversation history is retrieved.
