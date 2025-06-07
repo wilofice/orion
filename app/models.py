@@ -175,18 +175,31 @@ class WantToDoActivity(BaseModel):
             raise ValueError("preferred_time_window end time must be after start time")
         return v
 
+def get_default_working_hours() -> Dict[DayOfWeek, Tuple[time, time]]:
+    """Returns default working hours: Mon-Fri 9am-5pm with lunch break 12:30pm-1:30pm."""
+    # Note: Since we can't have a break in the middle, we'll use 9am-5pm continuous
+    # The lunch break can be handled separately through preferred_break_times or other mechanisms
+    default_hours = {
+        DayOfWeek.MONDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.TUESDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.WEDNESDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.THURSDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.FRIDAY: (time(9, 0), time(17, 0)),
+    }
+    return default_hours
+
 class UserPreferences(BaseModel):
     """Stores user-specific preferences influencing scheduling."""
     user_id: str = Field(..., description="Unique identifier for the user.")
     # Maps DayOfWeek enum (Mon=0) to a tuple of (start_time, end_time) naive time objects
-    working_hours: Dict[DayOfWeek, Tuple[time, time]] = Field(..., description="Dictionary mapping weekday (Mon=0) to working start and end times.")
+    working_hours: Dict[DayOfWeek, Tuple[time, time]] = Field(default_factory=get_default_working_hours, description="Dictionary mapping weekday (Mon=0) to working start and end times.")
     # List of preferred meeting windows, naive time objects
     preferred_meeting_times: Optional[List[Tuple[time, time]]] = Field(default_factory=list, description="Optional list of preferred time windows for meetings.")
     # List of specific dates the user is off
     days_off: List[date] = Field(default_factory=list, description="List of specific dates the user is unavailable.")
-    time_zone: str = Field(..., description="User's primary timezone (e.g., 'Europe/Paris', 'America/New_York').")
+    time_zone: str = Field(default="UTC", description="User's primary timezone (e.g., 'Europe/Paris', 'America/New_York').")
     preferred_break_duration: timedelta = Field(default=timedelta(minutes=15), description="Default duration for automatically scheduled breaks.")
-    work_block_max_duration: timedelta = Field(default=timedelta(minutes=90), description="Maximum duration of continuous work before suggesting a break.")
+    work_block_max_duration: timedelta = Field(default=timedelta(hours=1), description="Maximum duration of continuous work before suggesting a break.")
     # Optional mapping of activity category to a preferred duration
     preferred_activity_duration: Optional[Dict[ActivityCategory, timedelta]] = Field(default_factory=dict, description="Optional preferred duration for specific activity categories.")
     # Optional mapping of a time tuple (start, end) to energy level - naive time objects
@@ -204,6 +217,9 @@ class UserPreferences(BaseModel):
     @classmethod
     def check_valid_timezone(cls, v: str):
         """Validates that the provided timezone string is valid."""
+        # If empty string is provided, use default UTC
+        if not v:
+            return "UTC"
         if v not in pytz.all_timezones_set:
             raise ValueError(f"Invalid timezone string: {v}")
         return v
@@ -212,8 +228,9 @@ class UserPreferences(BaseModel):
     @classmethod
     def check_working_hours(cls, v: Dict[DayOfWeek, Tuple[time, time]]):
         """Validates working hours format and logic."""
+        # Allow empty dict - the default factory will provide default values
         if not v:
-             raise ValueError("working_hours cannot be empty")
+            return get_default_working_hours()
         for day, hours in v.items():
             if not isinstance(day, DayOfWeek):
                  raise ValueError(f"Invalid day key in working_hours: {day}. Use DayOfWeek enum.")

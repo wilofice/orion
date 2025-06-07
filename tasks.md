@@ -39,4 +39,21 @@ You need to know this : the audio are stored in S3 and the url is provided to th
     - Provide testing recommendations for user preferences handling.
     - Consider future enhancements for user preferences processing.
     - The user preferences are stored in a DynamoDB table and are retrieved when the user logs in or updates their preferences. The user preferences are used to customize the AI responses and the conversation history based on the user's preferences.
-21) We are evolving the preference_router.py POST method. Currently, it doesn't handle the update of user preferences. Your task is to implement the update of user preferences in the POST method. The update should be done in a way that it replaces the existing preferences with the new ones provided in the request body. The updated preferences should be saved in the DynamoDB table and returned in the response. You can look in file 'preference_router.py' at lines 281 - 287. Update the 'preference_service_backend_interaction.md' document to reflect the changes made in the implementation. 
+21) We are evolving the preference_router.py POST method. Currently, it doesn't handle the update of user preferences. Your task is to implement the update of user preferences in the POST method. The update should be done in a way that it replaces the existing preferences with the new ones provided in the request body. The updated preferences should be saved in the DynamoDB table and returned in the response. You can look in file 'preference_router.py' at lines 281 - 287. Update the 'preference_service_backend_interaction.md' document to reflect the changes made in the implementation.
+22) When creating UserPreference object, I have this error: 
+
+"4 validation errors for UserPreferences
+working_hours
+  Value error, working_hours cannot be empty [type=value_error, input_value={}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.10/v/value_error
+time_zone
+  Value error, Invalid timezone string:  [type=value_error, input_value='', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.10/v/value_error
+preferred_break_duration
+  Value error, preferred_break_duration must be positive [type=value_error, input_value=datetime.timedelta(0), input_type=timedelta]
+    For further information visit https://errors.pydantic.dev/2.10/v/value_error
+work_block_max_duration
+  Value error, work_block_max_duration must be positive [type=value_error, input_value=datetime.timedelta(0), input_type=timedelta]
+    For further information visit https://errors.pydantic.dev/2.10/v/value_error 
+" 
+I want you to update the userPreferences model to handle default values for for working_hours(9 am to 5 pm with break between at lunch time 1h between 12:30 pm and 01:30 pm), time_zone, preferred_break_duration (default to 15 minutes), and work_block_max_duration (default to 1 hour).
