@@ -63,6 +63,17 @@ class DayOfWeek(int, Enum):
     SATURDAY = 5
     SUNDAY = 6
 
+class InputMode(str, Enum):
+    """Enum for user input mode preferences."""
+    TEXT = "text"
+    VOICE = "voice"
+    BOTH = "both"
+
+class VoiceButtonPosition(str, Enum):
+    """Enum for voice button position in UI."""
+    LEFT = "left"
+    RIGHT = "right"
+
 # --- Core Models ---
 
 class TimeSlot(BaseModel):
@@ -184,6 +195,10 @@ class UserPreferences(BaseModel):
     social_preferences: Dict = Field(default_factory=dict, description="Flexible dictionary for social scheduling preferences.")
     # Flexible dictionary for rest, e.g., {"sleep_schedule": (time(23,0), time(7,0))} - naive time objects
     rest_preferences: Dict = Field(default_factory=dict, description="Flexible dictionary for rest and sleep preferences.")
+    # Input mode preference for the user interface
+    input_mode: InputMode = Field(default=InputMode.TEXT, description="User's preferred input mode (text, voice, or both).")
+    # Voice button position preference for the user interface
+    voice_button_position: VoiceButtonPosition = Field(default=VoiceButtonPosition.RIGHT, description="Position of the voice button in the UI (left or right).")
 
     @field_validator('time_zone')
     @classmethod

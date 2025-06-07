@@ -33,3 +33,9 @@ You need to know this : the audio are stored in S3 and the url is provided to th
     - The audio message is just a part of the conversation history, it doesn't change the way the conversation is handled.
     - The audio message is just a way to send the user request, it doesn't change the way the AI response is generated.
     - The audio message is just a way to send the user request, it doesn't change the way the conversation history is retrieved.
+20) We are evolving the preferences on the frontend and so updating the input and output data models in the backend. The preferences are handled on the frontend according to the document 'preference_service_backend_interaction.md' . Your task is to make sure the backend-api is designed according to the document. Basically we need to implement the following:
+    - Add support for the newest user preferences in the UserPreferences model.
+    - Update the implements of the user preferences handling in the /preferences route in preference_router.py.
+    - Provide testing recommendations for user preferences handling.
+    - Consider future enhancements for user preferences processing.
+    - The user preferences are stored in a DynamoDB table and are retrieved when the user logs in or updates their preferences. The user preferences are used to customize the AI responses and the conversation history based on the user's preferences.

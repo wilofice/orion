@@ -10,7 +10,7 @@ from db import (
     update_user_preferences,
     delete_user_preferences
 )
-from models import UserPreferences, DayOfWeek, EnergyLevel, ActivityCategory
+from models import UserPreferences, DayOfWeek, EnergyLevel, ActivityCategory, InputMode, VoiceButtonPosition
 from core.security import verify_token
 
 # --- Logging Setup ---
@@ -67,6 +67,8 @@ class CreatePreferencesRequest(BaseModel):
     energy_levels: Optional[Dict[str, str]] = Field(default=None, description="Energy levels for different time windows")
     social_preferences: Optional[Dict[str, Any]] = Field(default=None, description="Social scheduling preferences")
     rest_preferences: Optional[Dict[str, Any]] = Field(default=None, description="Rest and sleep preferences")
+    input_mode: Optional[str] = Field(default="text", description="User's preferred input mode (text, voice, or both)")
+    voice_button_position: Optional[str] = Field(default="right", description="Position of voice button in UI (left or right)")
 
 
 class UpdatePreferencesRequest(BaseModel):
@@ -81,6 +83,8 @@ class UpdatePreferencesRequest(BaseModel):
     energy_levels: Optional[Dict[str, str]] = Field(None, description="Energy levels for different time windows")
     social_preferences: Optional[Dict[str, Any]] = Field(None, description="Social scheduling preferences")
     rest_preferences: Optional[Dict[str, Any]] = Field(None, description="Rest and sleep preferences")
+    input_mode: Optional[str] = Field(None, description="User's preferred input mode (text, voice, or both)")
+    voice_button_position: Optional[str] = Field(None, description="Position of voice button in UI (left or right)")
 
 
 class PreferencesResponse(BaseModel):
@@ -96,6 +100,8 @@ class PreferencesResponse(BaseModel):
     energy_levels: Dict[str, str]
     social_preferences: Dict[str, Any]
     rest_preferences: Dict[str, Any]
+    input_mode: str
+    voice_button_position: str
     created_at: int
     updated_at: int
 
@@ -188,6 +194,15 @@ def prepare_preferences_for_dynamodb(preferences: Dict[str, Any]) -> Dict[str, A
     if 'days_off' in preferences:
         preferences['days_off'] = [d.isoformat() if isinstance(d, date) else d for d in preferences['days_off']]
     
+    # Convert enum fields to strings
+    if 'input_mode' in preferences:
+        mode = preferences['input_mode']
+        preferences['input_mode'] = mode.value if hasattr(mode, 'value') else mode
+    
+    if 'voice_button_position' in preferences:
+        position = preferences['voice_button_position']
+        preferences['voice_button_position'] = position.value if hasattr(position, 'value') else position
+    
     return preferences
 
 
@@ -226,6 +241,8 @@ def convert_dynamodb_to_response(db_prefs: Dict[str, Any]) -> PreferencesRespons
         energy_levels=db_prefs.get('energy_levels', {}),
         social_preferences=db_prefs.get('social_preferences', {}),
         rest_preferences=db_prefs.get('rest_preferences', {}),
+        input_mode=db_prefs.get('input_mode', 'text'),
+        voice_button_position=db_prefs.get('voice_button_position', 'right'),
         created_at=db_prefs.get('created_at', 0),
         updated_at=db_prefs.get('updated_at', 0)
     )
@@ -317,6 +334,12 @@ async def create_user_preferences(
         
         if request.rest_preferences:
             preferences_data['rest_preferences'] = request.rest_preferences
+        
+        if request.input_mode:
+            preferences_data['input_mode'] = InputMode(request.input_mode)
+        
+        if request.voice_button_position:
+            preferences_data['voice_button_position'] = VoiceButtonPosition(request.voice_button_position)
         
         # Validate with UserPreferences model
         user_prefs = UserPreferences(**preferences_data)
@@ -475,6 +498,12 @@ async def update_preferences(
         
         if request.rest_preferences is not None:
             updates['rest_preferences'] = request.rest_preferences
+        
+        if request.input_mode is not None:
+            updates['input_mode'] = InputMode(request.input_mode)
+        
+        if request.voice_button_position is not None:
+            updates['voice_button_position'] = VoiceButtonPosition(request.voice_button_position)
         
         if not updates:
             return {"message": "No fields to update"}
