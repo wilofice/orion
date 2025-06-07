@@ -42,10 +42,23 @@ async def list_user_conversations(
             for turn in item.get("history", []):
                 turn_obj = ConversationTurn(**turn)
                 if turn_obj.role == ConversationRole.USER:
-                    turn_obj.parts = [part.split("USER: ")[1] for part in turn_obj.parts if isinstance(part, str)]
+                    # Process parts - handle both string and dict (audio) formats
+                    processed_parts = []
+                    for part in turn_obj.parts:
+                        if isinstance(part, str):
+                            # Regular text message - remove "USER: " prefix
+                            processed_parts.append(part.split("USER: ")[1] if "USER: " in part else part)
+                        elif isinstance(part, dict) and 'transcript' in part and 'audio_url' in part:
+                            # Audio message - remove "USER: " prefix from transcript
+                            processed_part = {
+                                "transcript": part['transcript'].split("USER: ")[1] if "USER: " in part['transcript'] else part['transcript'],
+                                "audio_url": part['audio_url']
+                            }
+                            processed_parts.append(processed_part)
+                    turn_obj.parts = processed_parts
                     filtered_turns.append(turn_obj)
                 if turn_obj.role == ConversationRole.MODEL:
-                    turn_obj.parts = [part.split("AI: ")[1] for part in turn_obj.parts if isinstance(part, str)]
+                    turn_obj.parts = [part.split("AI: ")[1] if isinstance(part, str) and "AI: " in part else part for part in turn_obj.parts]
                     filtered_turns.append(turn_obj)
             
             conversations.append(

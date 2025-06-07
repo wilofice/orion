@@ -55,11 +55,17 @@ class ToolResult(BaseModel):
     # message: Optional[str] = Field(None, description="Optional message accompanying the status (e.g., error details).")
 
 
+class AudioMessage(BaseModel):
+    """Represents an audio message with its transcript and S3 URL."""
+    transcript: str = Field(..., description="The transcribed text content of the audio message.")
+    audio_url: str = Field(..., description="The S3 URL where the audio file is stored.")
+
+
 # Content part of a ConversationTurn
 # Model can return text or a function call request
-# User always provides text
+# User always provides text or audio message
 # Function role provides the result of a function execution
-ContentData = Union[str, FunctionCall, ToolResult]
+ContentData = Union[str, FunctionCall, ToolResult, AudioMessage, Dict[str, Any]]
 
 class ConversationTurn(BaseModel):
     """Represents a single turn in the conversation history."""
@@ -70,7 +76,10 @@ class ConversationTurn(BaseModel):
     timestamp: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Optional timestamp of when the turn occurred. Can be used for logging or debugging.")
     # Helper validator/constructor for convenience (optional)
     @classmethod
-    def user_turn(cls, text: str) -> 'ConversationTurn':
+    def user_turn(cls, text: str, audio_url: Optional[str] = None) -> 'ConversationTurn':
+        if audio_url:
+            # For audio messages, store as a dict matching the expected format
+            return cls(role=ConversationRole.USER, parts=[{"transcript": f"USER: {text}", "audio_url": audio_url}])
         return cls(role=ConversationRole.USER, parts=[f"USER: {text}"])
 
     @classmethod

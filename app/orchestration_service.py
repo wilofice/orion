@@ -271,7 +271,7 @@ async def handle_chat_request(
         preferences = await get_user_preferences(user_id) # Task ORCH-9 (using dummy here)
 
         # Append current user prompt to history
-        user_turn = ConversationTurn.user_turn(prompt_text)
+        user_turn = ConversationTurn.user_turn(prompt_text, audio_url=request.audio_url)
         history.append(user_turn)
         await session_manager.append_turn(session_id, user_turn) # Persist user turn
 

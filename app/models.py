@@ -259,7 +259,8 @@ class ChatRequest(BaseModel):
     """Request model for the chat prompt endpoint."""
     user_id: str = Field(..., description="Unique identifier for the user making the request.")
     session_id: Optional[str] = Field(None, description="Optional identifier for the ongoing chat session. Helps maintain conversation history.")
-    prompt_text: str = Field(..., description="The natural language input from the user.")
+    prompt_text: str = Field(..., description="The natural language input from the user or transcribed audio content.")
+    audio_url: Optional[str] = Field(None, description="Optional URL of the audio file stored in S3 for voice messages.")
     client_context: Optional[Dict[str, Any]] = Field(None, description="Optional arbitrary JSON object providing client-side context (e.g., current view, timezone).")
 
 class ResponseStatus(str, Enum):
