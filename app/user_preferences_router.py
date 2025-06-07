@@ -221,7 +221,7 @@ def convert_dynamodb_to_response(db_prefs: Dict[str, Any]) -> PreferencesRespons
     # Convert working hours
     working_hours_response = {}
     if 'working_hours' in db_prefs:
-        day_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        day_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
         for day_num, hours in db_prefs['working_hours'].items():
             if int(day_num) < len(day_names):
                 day_name = day_names[int(day_num)]
