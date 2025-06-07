@@ -58,7 +58,7 @@ class CreatePreferencesRequest(BaseModel):
     """Request model for creating user preferences"""
     user_id: str = Field(..., description="Unique identifier for the user")
     time_zone: str = Field(..., description="User's primary timezone (e.g., 'Europe/Paris', 'America/New_York')")
-    working_hours: WorkingHoursInput = Field(..., description="Working hours for each day of the week")
+    working_hours: Optional[WorkingHoursInput] = Field(None, description="Working hours for each day of the week. If not provided, defaults to Mon-Fri 9am-5pm")
     preferred_meeting_times: Optional[List[TimeWindow]] = Field(default=None, description="Preferred time windows for meetings")
     days_off: Optional[List[str]] = Field(default=None, description="List of dates (YYYY-MM-DD) when user is unavailable")
     preferred_break_duration_minutes: Optional[int] = Field(default=15, description="Default break duration in minutes")
@@ -118,8 +118,11 @@ def convert_time_to_string(time_obj: time) -> str:
     return time_obj.strftime("%H:%M")
 
 
-def convert_working_hours_input_to_dict(working_hours: WorkingHoursInput) -> Dict[int, Tuple[time, time]]:
+def convert_working_hours_input_to_dict(working_hours: Optional[WorkingHoursInput]) -> Optional[Dict[int, Tuple[time, time]]]:
     """Convert WorkingHoursInput to the format expected by UserPreferences model"""
+    if not working_hours:
+        return None
+        
     result = {}
     
     day_mapping = {
@@ -132,13 +135,20 @@ def convert_working_hours_input_to_dict(working_hours: WorkingHoursInput) -> Dic
         'sunday': DayOfWeek.SUNDAY
     }
     
+    # Check if any day has values
+    has_any_day = False
     for day_name, day_enum in day_mapping.items():
         time_window = getattr(working_hours, day_name)
         if time_window:
+            has_any_day = True
             start_time = convert_time_string_to_time(time_window.start)
             end_time = convert_time_string_to_time(time_window.end)
             result[day_enum.value] = (start_time, end_time)
     
+    # If no days were provided, return None to trigger default values
+    if not has_any_day:
+        return None
+        
     return result
 
 
@@ -309,15 +319,18 @@ async def create_user_preferences(
         preferences_data = {
             'user_id': user_id,
             'time_zone': request.time_zone,
-            'working_hours': working_hours,
             'days_off': [date.fromisoformat(d) for d in (request.days_off or [])]
         }
+        
+        # Only add working_hours if not None (let model use defaults)
+        if working_hours is not None:
+            preferences_data['working_hours'] = working_hours
 
         if request.preferred_break_duration_minutes > 0:
             preferences_data.update({'preferred_break_duration' : timedelta(minutes=request.preferred_break_duration_minutes)})
 
         if request.work_block_max_duration_minutes > 0:
-            preferences_data.update({'work_block_max_duration' : timedelta(minutes=request.work_block_max_duration)})
+            preferences_data.update({'work_block_max_duration' : timedelta(minutes=request.work_block_max_duration_minutes)})
 
         # Add optional fields
         if request.preferred_meeting_times:
@@ -473,7 +486,9 @@ async def update_preferences(
         
         if request.working_hours is not None:
             working_hours = convert_working_hours_input_to_dict(request.working_hours)
-            updates['working_hours'] = working_hours
+            # Only update if there are actual working hours provided
+            if working_hours is not None:
+                updates['working_hours'] = working_hours
         
         if request.preferred_meeting_times is not None:
             updates['preferred_meeting_times'] = [

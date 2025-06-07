@@ -57,3 +57,5 @@ work_block_max_duration
     For further information visit https://errors.pydantic.dev/2.10/v/value_error 
 " 
 I want you to update the userPreferences model to handle default values for for working_hours(9 am to 5 pm with break between at lunch time 1h between 12:30 pm and 01:30 pm), time_zone, preferred_break_duration (default to 15 minutes), and work_block_max_duration (default to 1 hour).
+
+23) Examine current implementations of working hours in preference_router.py. There is a bu bug when creating a new user preference. The working hours are not set correctly. The default working hours should be from 9 am to 5 pm with a break between 12:30 pm and 1:30 pm. Update the implementation to ensure that the working hours are set correctly when creating a new user preference. Specially, there is a bug when the working_hours is an empty dictionary. The working hours should be set to the default values in that case. Update the implementation to handle this case correctly. Update the UserPreferences model to ensure that the working_hours can be null or undefined.
