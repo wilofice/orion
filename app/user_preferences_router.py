@@ -223,7 +223,7 @@ def convert_dynamodb_to_response(db_prefs: Dict[str, Any]) -> PreferencesRespons
     if 'working_hours' in db_prefs:
         day_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
         for day_num, hours in db_prefs['working_hours'].items():
-            if int(day_num) < len(day_names):
+            if DayOfWeek[day_num.split('.')[1]] < len(day_names):
                 day_name = day_names[int(day_num)]
                 working_hours_response[day_name] = TimeWindow(
                     start=hours['start'],
