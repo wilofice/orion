@@ -2,6 +2,7 @@ import pytest
 from app import orchestration_service as orch
 from app.models import ChatRequest, ResponseStatus
 from app.gemini_interface import GeminiResponse, ResponseType, FunctionCall
+from unittest.mock import MagicMock, AsyncMock
 
 
 class DummySessionManager(orch.AbstractSessionManager):
@@ -19,12 +20,6 @@ class DummySessionManager(orch.AbstractSessionManager):
         return session_id
 
 
-class DummyGeminiClient(orch.AbstractGeminiClient):
-    def __init__(self, responses):
-        self.responses = responses
-
-    async def send_to_gemini(self, request):
-        return self.responses.pop(0)
 
 
 class DummyToolExecutor(orch.AbstractToolExecutor):
@@ -58,14 +53,15 @@ import asyncio
 
 def test_handle_chat_request_text(monkeypatch):
     session = DummySessionManager()
-    gemini = DummyGeminiClient([GeminiResponse(response_type=ResponseType.TEXT, text="hi")])
+    gemini = MagicMock(spec=orch.AbstractGeminiClient)
+    gemini.send_to_gemini = AsyncMock(return_value=GeminiResponse(response_type=ResponseType.TEXT, text="hi"))
     executed = []
     tool_exec = DummyToolExecutor(executed)
     cal = DummyCalendarClient()
 
     monkeypatch.setattr(orch, "TOOL_DEFINITIONS", [])
     async def dummy_prefs(uid):
-        return orch.DummyPrefs(user_id=uid)
+        return orch.UserPreferences(user_id=uid)
     monkeypatch.setattr(orch, "get_user_preferences", dummy_prefs)
 
     req = ChatRequest(user_id="u1", session_id="s1", prompt_text="hello")
@@ -84,14 +80,15 @@ def test_handle_chat_request_function_call(monkeypatch):
         GeminiResponse(response_type=ResponseType.FUNCTION_CALL, function_call=fc),
         GeminiResponse(response_type=ResponseType.TEXT, text="done"),
     ]
-    gemini = DummyGeminiClient(responses)
+    gemini = MagicMock(spec=orch.AbstractGeminiClient)
+    gemini.send_to_gemini = AsyncMock(side_effect=responses)
     executed = []
     tool_exec = DummyToolExecutor(executed)
     cal = DummyCalendarClient()
 
     monkeypatch.setattr(orch, "TOOL_DEFINITIONS", [])
     async def dummy_prefs(uid):
-        return orch.DummyPrefs(user_id=uid)
+        return orch.UserPreferences(user_id=uid)
     monkeypatch.setattr(orch, "get_user_preferences", dummy_prefs)
 
     req = ChatRequest(user_id="u1", session_id="s1", prompt_text="hi")
