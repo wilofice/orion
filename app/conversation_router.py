@@ -3,7 +3,7 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Depends
 
-from gemini_interface import ConversationTurn, ConversationRole
+from gemini_interface import ConversationTurn, ConversationRole, AudioMessage
 from db import get_user_conversations
 from pydantic import BaseModel
 from core.security import verify_token
@@ -22,16 +22,16 @@ class Conversation(BaseModel):
 
 @router.get("/{user_id}", response_model=List[Conversation])
 async def list_user_conversations(
-    user_id: str,
-    current_user_id: str = Depends(verify_token)
+    user_id: str, current_user_id: str = Depends(verify_token)
 ):
-    """Return all chat sessions for the given user."""    
+    """Return all chat sessions for the given user."""
     # Verify that the authenticated user can only access their own conversations
     if current_user_id != user_id:
-        logging.warning(f"User {current_user_id} attempted to access conversations for user {user_id}")
+        logging.warning(
+            f"User {current_user_id} attempted to access conversations for user {user_id}"
+        )
         raise HTTPException(
-            status_code=403,
-            detail="You can only access your own conversations"
+            status_code=403, detail="You can only access your own conversations"
         )
     try:
         items = get_user_conversations(user_id)
@@ -40,27 +40,56 @@ async def list_user_conversations(
             # Filter to only include USER and AI (MODEL) messages
             filtered_turns = []
             for turn in item.get("history", []):
-                turn_obj = ConversationTurn(**turn)
+                try:
+                    turn_obj = ConversationTurn(**turn)
+                except Exception:
+                    continue
                 if turn_obj.role == ConversationRole.USER:
                     # Process parts - handle both string and dict (audio) formats
                     processed_parts = []
                     for part in turn_obj.parts:
                         if isinstance(part, str):
-                            # Regular text message - remove "USER: " prefix
-                            processed_parts.append(part.split("USER: ")[1] if "USER: " in part else part)
-                        elif isinstance(part, dict) and 'transcript' in part and 'audio_url' in part:
-                            # Audio message - remove "USER: " prefix from transcript
+                            processed_parts.append(
+                                part.split("USER: ")[1] if "USER: " in part else part
+                            )
+                        elif (
+                            isinstance(part, dict)
+                            and "transcript" in part
+                            and "audio_url" in part
+                        ):
                             processed_part = {
-                                "transcript": part['transcript'].split("USER: ")[1] if "USER: " in part['transcript'] else part['transcript'],
-                                "audio_url": part['audio_url']
+                                "transcript": (
+                                    part["transcript"].split("USER: ")[1]
+                                    if "USER: " in part["transcript"]
+                                    else part["transcript"]
+                                ),
+                                "audio_url": part["audio_url"],
                             }
                             processed_parts.append(processed_part)
+                        elif isinstance(part, AudioMessage):
+                            processed_parts.append(
+                                {
+                                    "transcript": (
+                                        part.transcript.split("USER: ")[1]
+                                        if "USER: " in part.transcript
+                                        else part.transcript
+                                    ),
+                                    "audio_url": part.audio_url,
+                                }
+                            )
                     turn_obj.parts = processed_parts
                     filtered_turns.append(turn_obj)
                 if turn_obj.role == ConversationRole.MODEL:
-                    turn_obj.parts = [part.split("AI: ")[1] if isinstance(part, str) and "AI: " in part else part for part in turn_obj.parts]
+                    turn_obj.parts = [
+                        (
+                            part.split("AI: ")[1]
+                            if isinstance(part, str) and "AI: " in part
+                            else part
+                        )
+                        for part in turn_obj.parts
+                    ]
                     filtered_turns.append(turn_obj)
-            
+
             conversations.append(
                 Conversation(
                     session_id=item.get("session_id"),
@@ -71,4 +100,6 @@ async def list_user_conversations(
         return conversations
     except Exception as exc:
         logging.exception("Failed to retrieve conversations")
-        raise HTTPException(status_code=500, detail="Failed to retrieve conversations") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve conversations"
+        ) from exc
