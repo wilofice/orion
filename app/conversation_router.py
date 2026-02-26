@@ -3,8 +3,8 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Depends
 
-from gemini_interface import ConversationTurn
-from dynamodb import get_user_conversations
+from gemini_interface import ConversationTurn, ConversationRole
+from db import get_user_conversations
 from pydantic import BaseModel
 from core.security import verify_token
 
@@ -37,12 +37,35 @@ async def list_user_conversations(
         items = get_user_conversations(user_id)
         conversations = []
         for item in items:
-            turns = [ConversationTurn(**turn) for turn in item.get("history", [])]
+            # Filter to only include USER and AI (MODEL) messages
+            filtered_turns = []
+            for turn in item.get("history", []):
+                turn_obj = ConversationTurn(**turn)
+                if turn_obj.role == ConversationRole.USER:
+                    # Process parts - handle both string and dict (audio) formats
+                    processed_parts = []
+                    for part in turn_obj.parts:
+                        if isinstance(part, str):
+                            # Regular text message - remove "USER: " prefix
+                            processed_parts.append(part.split("USER: ")[1] if "USER: " in part else part)
+                        elif isinstance(part, dict) and 'transcript' in part and 'audio_url' in part:
+                            # Audio message - remove "USER: " prefix from transcript
+                            processed_part = {
+                                "transcript": part['transcript'].split("USER: ")[1] if "USER: " in part['transcript'] else part['transcript'],
+                                "audio_url": part['audio_url']
+                            }
+                            processed_parts.append(processed_part)
+                    turn_obj.parts = processed_parts
+                    filtered_turns.append(turn_obj)
+                if turn_obj.role == ConversationRole.MODEL:
+                    turn_obj.parts = [part.split("AI: ")[1] if isinstance(part, str) and "AI: " in part else part for part in turn_obj.parts]
+                    filtered_turns.append(turn_obj)
+            
             conversations.append(
                 Conversation(
                     session_id=item.get("session_id"),
                     user_id=item.get("user_id"),
-                    history=turns,
+                    history=filtered_turns,
                 )
             )
         return conversations

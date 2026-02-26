@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     DYNAMODB_CHAT_SESSIONS_TABLE_NAME: str = "ChatSessions"
     DYNAMODB_USER_PREFERENCES_TABLE_NAME: str = "UserPreferences"
     DYNAMODB_USER_TASKS_TABLE_NAME: str = "UserTasks"
+    DYNAMODB_USER_EMAIL_MAPPING_TABLE_NAME: str = "UserEmailMapping"
+    DYNAMODB_TOOL_EXECUTION_RESULTS_TABLE_NAME: str = "ToolExecutionResults"
     AWS_DYNAMODB_ENDPOINT_URL: Optional[str] = None  # Optional for local development/testing
 
     # ENCRYPTION_KEY must be a 32-byte (256-bit) key.

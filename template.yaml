@@ -10,7 +10,7 @@ Resources:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       PackageType: Image
-      ImageUri: 487239600670.dkr.ecr.eu-north-1.amazonaws.com/orionimages/orion@sha256:2a0652a4436898eec09a53d752b327c5d1b679dbe6b35b717400aff83ebe311c
+      ImageUri: 487239600670.dkr.ecr.eu-north-1.amazonaws.com/orionimages/orion@sha256:14682147e921f0a173fd3ed1fcd211740b7212fe8478f3ad9636508cc0bb3084
       Architectures:
         - x86_64
       MemorySize: 512

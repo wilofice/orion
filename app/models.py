@@ -63,6 +63,17 @@ class DayOfWeek(int, Enum):
     SATURDAY = 5
     SUNDAY = 6
 
+class InputMode(str, Enum):
+    """Enum for user input mode preferences."""
+    TEXT = "text"
+    VOICE = "voice"
+    BOTH = "both"
+
+class VoiceButtonPosition(str, Enum):
+    """Enum for voice button position in UI."""
+    LEFT = "left"
+    RIGHT = "right"
+
 # --- Core Models ---
 
 class TimeSlot(BaseModel):
@@ -164,18 +175,31 @@ class WantToDoActivity(BaseModel):
             raise ValueError("preferred_time_window end time must be after start time")
         return v
 
+def get_default_working_hours() -> Dict[DayOfWeek, Tuple[time, time]]:
+    """Returns default working hours: Mon-Fri 9am-5pm with lunch break 12:30pm-1:30pm."""
+    # Note: Since we can't have a break in the middle, we'll use 9am-5pm continuous
+    # The lunch break can be handled separately through preferred_break_times or other mechanisms
+    default_hours = {
+        DayOfWeek.MONDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.TUESDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.WEDNESDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.THURSDAY: (time(9, 0), time(17, 0)),
+        DayOfWeek.FRIDAY: (time(9, 0), time(17, 0)),
+    }
+    return default_hours
+
 class UserPreferences(BaseModel):
     """Stores user-specific preferences influencing scheduling."""
     user_id: str = Field(..., description="Unique identifier for the user.")
     # Maps DayOfWeek enum (Mon=0) to a tuple of (start_time, end_time) naive time objects
-    working_hours: Dict[DayOfWeek, Tuple[time, time]] = Field(..., description="Dictionary mapping weekday (Mon=0) to working start and end times.")
+    working_hours: Dict[DayOfWeek, Tuple[time, time]] = Field(default_factory=get_default_working_hours, description="Dictionary mapping weekday (Mon=0) to working start and end times.")
     # List of preferred meeting windows, naive time objects
     preferred_meeting_times: Optional[List[Tuple[time, time]]] = Field(default_factory=list, description="Optional list of preferred time windows for meetings.")
     # List of specific dates the user is off
     days_off: List[date] = Field(default_factory=list, description="List of specific dates the user is unavailable.")
-    time_zone: str = Field(..., description="User's primary timezone (e.g., 'Europe/Paris', 'America/New_York').")
+    time_zone: str = Field(default="UTC", description="User's primary timezone (e.g., 'Europe/Paris', 'America/New_York').")
     preferred_break_duration: timedelta = Field(default=timedelta(minutes=15), description="Default duration for automatically scheduled breaks.")
-    work_block_max_duration: timedelta = Field(default=timedelta(minutes=90), description="Maximum duration of continuous work before suggesting a break.")
+    work_block_max_duration: timedelta = Field(default=timedelta(hours=1), description="Maximum duration of continuous work before suggesting a break.")
     # Optional mapping of activity category to a preferred duration
     preferred_activity_duration: Optional[Dict[ActivityCategory, timedelta]] = Field(default_factory=dict, description="Optional preferred duration for specific activity categories.")
     # Optional mapping of a time tuple (start, end) to energy level - naive time objects
@@ -184,11 +208,18 @@ class UserPreferences(BaseModel):
     social_preferences: Dict = Field(default_factory=dict, description="Flexible dictionary for social scheduling preferences.")
     # Flexible dictionary for rest, e.g., {"sleep_schedule": (time(23,0), time(7,0))} - naive time objects
     rest_preferences: Dict = Field(default_factory=dict, description="Flexible dictionary for rest and sleep preferences.")
+    # Input mode preference for the user interface
+    input_mode: InputMode = Field(default=InputMode.TEXT, description="User's preferred input mode (text, voice, or both).")
+    # Voice button position preference for the user interface
+    voice_button_position: VoiceButtonPosition = Field(default=VoiceButtonPosition.RIGHT, description="Position of the voice button in the UI (left or right).")
 
     @field_validator('time_zone')
     @classmethod
     def check_valid_timezone(cls, v: str):
         """Validates that the provided timezone string is valid."""
+        # If empty string is provided, use default UTC
+        if not v:
+            return "UTC"
         if v not in pytz.all_timezones_set:
             raise ValueError(f"Invalid timezone string: {v}")
         return v
@@ -197,8 +228,9 @@ class UserPreferences(BaseModel):
     @classmethod
     def check_working_hours(cls, v: Dict[DayOfWeek, Tuple[time, time]]):
         """Validates working hours format and logic."""
+        # Allow empty dict - the default factory will provide default values
         if not v:
-             raise ValueError("working_hours cannot be empty")
+            return get_default_working_hours()
         for day, hours in v.items():
             if not isinstance(day, DayOfWeek):
                  raise ValueError(f"Invalid day key in working_hours: {day}. Use DayOfWeek enum.")
@@ -259,7 +291,8 @@ class ChatRequest(BaseModel):
     """Request model for the chat prompt endpoint."""
     user_id: str = Field(..., description="Unique identifier for the user making the request.")
     session_id: Optional[str] = Field(None, description="Optional identifier for the ongoing chat session. Helps maintain conversation history.")
-    prompt_text: str = Field(..., description="The natural language input from the user.")
+    prompt_text: str = Field(..., description="The natural language input from the user or transcribed audio content.")
+    audio_url: Optional[str] = Field(None, description="Optional URL of the audio file stored in S3 for voice messages.")
     client_context: Optional[Dict[str, Any]] = Field(None, description="Optional arbitrary JSON object providing client-side context (e.g., current view, timezone).")
 
 class ResponseStatus(str, Enum):
@@ -280,79 +313,3 @@ class ErrorDetail(BaseModel):
     error_code: str = Field(..., description="A unique code identifying the type of error.")
     message: str = Field(..., description="A user-friendly error message.")
     details: Optional[Dict[str, Any]] = Field(None, description="Optional additional details about the error.")
-# --- Example Usage (Optional, for testing/demonstration) ---
-
-if __name__ == "__main__":
-    # Ensure you have pytz installed: pip install pytz pydantic
-    from zoneinfo import ZoneInfo # Python 3.9+
-
-    # Use timezone-aware datetimes
-    now = datetime.now(ZoneInfo("Europe/Paris"))
-    one_hour = timedelta(hours=1)
-    thirty_mins = timedelta(minutes=30)
-
-    try:
-        # Example TimeSlot
-        slot = TimeSlot(start_time=now, end_time=now + one_hour)
-        print("--- TimeSlot Example ---")
-        print(slot)
-        print(f"Duration: {slot.duration}")
-        print("-" * 20)
-
-        # Example MustDoActivity
-        meeting = MustDoActivity(
-            title="Project Orion Sync",
-            start_time=now + timedelta(days=1, hours=2),
-            end_time=now + timedelta(days=1, hours=3),
-            priority=PriorityLevel.HIGH,
-            source_calendar_id="primary"
-        )
-        print("--- MustDoActivity Example ---")
-        print(meeting.model_dump_json(indent=2))
-        print("-" * 20)
-
-        # Example WantToDoActivity
-        coding_task = WantToDoActivity(
-            title="Implement Task 2",
-            estimated_duration=timedelta(hours=2, minutes=30),
-            priority=8,
-            category=ActivityCategory.WORK,
-            deadline=now + timedelta(days=3),
-            preferred_time_window=(time(9, 0), time(12, 0))
-        )
-        print("--- WantToDoActivity Example ---")
-        print(coding_task.model_dump_json(indent=2))
-        print("-" * 20)
-
-        # Example UserPreferences
-        prefs = UserPreferences(
-            user_id="user_123",
-            time_zone="Europe/Paris",
-            working_hours={
-                DayOfWeek.MONDAY: (time(9, 0), time(17, 30)),
-                DayOfWeek.TUESDAY: (time(9, 0), time(17, 30)),
-                DayOfWeek.WEDNESDAY: (time(9, 0), time(13, 0)), # Half day
-                DayOfWeek.THURSDAY: (time(9, 0), time(17, 30)),
-                DayOfWeek.FRIDAY: (time(9, 0), time(16, 30)),
-            },
-            days_off=[date(2025, 5, 1)], # Example public holiday
-            preferred_break_duration=timedelta(minutes=20),
-            work_block_max_duration=timedelta(hours=2),
-            energy_levels={
-                (time(9,0), time(12,0)): EnergyLevel.HIGH,
-                (time(14,0), time(17,0)): EnergyLevel.MEDIUM,
-            },
-            rest_preferences={"sleep_schedule": (time(23,0), time(7,0))}
-        )
-        print("--- UserPreferences Example ---")
-        print(prefs.model_dump_json(indent=2))
-        print("-" * 20)
-
-        # Example Validation Error (uncomment to test)
-        # invalid_slot = TimeSlot(start_time=now + one_hour, end_time=now)
-        # invalid_task = WantToDoActivity(title="t", estimated_duration=timedelta(0), priority=5, category=ActivityCategory.WORK)
-        # invalid_prefs = UserPreferences(user_id="u", time_zone="Invalid/Zone", working_hours={})
-
-    except ValueError as e:
-        print(f"\nValidation Error: {e}")
-

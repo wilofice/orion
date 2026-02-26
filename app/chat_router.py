@@ -11,7 +11,7 @@ from orchestration_service import AbstractGeminiClient
 from orchestration_service import AbstractToolExecutor
 from calendar_client import AbstractCalendarClient, GoogleCalendarAPIClient
 from models import ChatRequest, ChatResponse, ErrorDetail
-from dynamodb import get_decrypted_user_tokens
+from db import get_decrypted_user_tokens
 from core.security import verify_token as jwt_verify_token
 
 from mangum import Mangum
@@ -34,39 +34,43 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 def get_session_manager() -> AbstractSessionManager:
-    # Replace with logic to get/create a session manager instance
-    # Might involve getting DB connection from another dependency
+    """Return the session manager implementation used by the API."""
+    # In production this could fetch an instance from a dependency
+    # injection container or create it lazily.  For now we always use
+    # the DynamoDB backed implementation.
     logger.warning("Using DynamoSessionManager instance")
     return DynamoSessionManager()
 
 
 def get_gemini_client() -> AbstractGeminiClient:
-    # Replace with logic to get/create a Gemini client instance
+    """Factory for the Gemini LLM client used during orchestration."""
+    # A real implementation would construct a client connected to the
+    # Gemini API.  The tests use this placeholder instance.
     logger.warning("Using dummy AbstractGeminiClient instance")
     return AbstractGeminiClient()
 
 
 def get_tool_executor() -> AbstractToolExecutor:
-    # Replace with logic to get/create a Tool Executor instance
+    """Return the component responsible for executing tool calls."""
+    # This could wire up a registry of tool wrappers in a more complex
+    # application.  At the moment it simply returns a stub executor used
+    # in unit tests.
     logger.warning("Using dummy AbstractToolExecutor instance")
-    # This might involve loading tool wrappers into a registry
     return AbstractToolExecutor()
 
 
 def get_calendar_client(email: str) -> AbstractCalendarClient:
-    # Replace with logic to get/create a Calendar Client instance
-    # This might involve handling authentication per user if not using service account
+    """Create a Google calendar client for the given user."""
+    # In production this would likely use OAuth credentials stored for
+    # the user.  When running the tests we simply construct the client
+    # with whatever dummy data is available.
     logger.warning("Using dummy GoogleCalendarAPIClient instance")
-    # Needs credential configuration
     try:
-        scopes = ['https://www.googleapis.com/auth/calendar']  # Define your scopes
-        # Attempt to create, might need error handling if creds missing
-
+        scopes = ["https://www.googleapis.com/auth/calendar"]
         decrypted_tokens = get_decrypted_user_tokens(email)
         return GoogleCalendarAPIClient(decrypted_tokens, scopes)
     except Exception as e:
         logger.error(f"Failed to instantiate GoogleCalendarAPIClient: {e}")
-        # Raise an exception that FastAPI can handle, e.g., 503 Service Unavailable
         raise HTTPException(status_code=503, detail="Calendar service client unavailable.")
 
 # --- Pydantic Schemas (Task 3.2, 3.3, 3.4) ---
@@ -169,11 +173,4 @@ async def process_chat_prompt(
 @router.get("/", include_in_schema=False)
 async def root():
     return {"message": "Orion Orchestration Service is running."}
-
-# Define a Pydantic model for user creation
-class CreateUserRequest(BaseModel):
-    user_id: str
-    email: str
-    password: str  # In a real app, ensure this is hashed before storing
-
 

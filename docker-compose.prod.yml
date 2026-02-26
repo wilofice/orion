@@ -1,0 +1,82 @@
+version: '3.8'
+
+# Production overrides for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+
+services:
+  orion-api:
+    build:
+      context: .
+      dockerfile: Dockerfile  # Use the original Lambda-ready Dockerfile
+    environment:
+      # Override for production - remove local DynamoDB endpoint
+      - AWS_DYNAMODB_ENDPOINT_URL=
+    command: ["gunicorn", "boot:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080", "--access-logfile", "-", "--error-logfile", "-"]
+    volumes: []  # Remove volume mounts for production
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    restart: always
+
+  # Remove local services for production
+  dynamodb-local:
+    profiles:
+      - local-dev  # Only start in local development
+
+  dynamodb-admin:
+    profiles:
+      - local-dev  # Only start in local development
+
+  db-init:
+    profiles:
+      - local-dev  # Only start in local development
+
+  # Enable nginx by default in production
+  nginx:
+    profiles: []  # Remove profile restriction
+
+  # Add production monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: orion-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - orion-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: orion-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - orion-network
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

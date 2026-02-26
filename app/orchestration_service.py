@@ -1,11 +1,14 @@
 import logging
 import uuid
-from datetime import time, timedelta, date
+from datetime import time, timedelta, date, datetime
 from typing import List, Dict, Any, Optional
+from zoneinfo import ZoneInfo
+
 from google import genai
 from google.genai import types
 import json
-from pydantic import BaseModel, Field
+
+import time as time_module
 # --- Interface Imports ---
 # Assuming interfaces and models from previous tasks are defined and importable
     # From Task ORCH-3 / main.py
@@ -27,7 +30,12 @@ from models import UserPreferences
 from calendar_client import AbstractCalendarClient
 import threading
 from settings_v1 import settings
-
+# Import the tool execution result persistence function
+from db import save_tool_execution_result
+from system import build_system_instruction
+from db import get_user_preferences as db_get_user_preferences
+from models import InputMode, VoiceButtonPosition, ActivityCategory
+import asyncio
 class GenAIClientSingleton:
     _instance = None
     _lock = threading.Lock()  # Ensures thread safety
@@ -56,7 +64,7 @@ class GenAIClientSingleton:
 # --- Placeholder Interfaces/Implementations ---
 # Define dummy classes if real ones aren't available yet
 class AbstractGeminiClient:
-    async def send_to_gemini(self, request: GeminiRequest) -> GeminiResponse:
+    async def send_to_gemini(self, request: GeminiRequest, system_instruction: str) -> GeminiResponse:
         logger.info("Sending request to Gemini API...")
 
         # Prepare the tools for the request
@@ -72,9 +80,15 @@ class AbstractGeminiClient:
         # Configure the request payload
 
         tools = types.Tool(function_declarations=request.tools)
-        config = types.GenerateContentConfig(tools=[tools])
+        
+        # Add system instruction for French responses
+        config = types.GenerateContentConfig(
+            tools=[tools],
+            system_instruction=system_instruction
+        )
+        
         payload = {
-            "model": "gemini-2.0-flash",
+            "model": "gemini-2.5-pro-preview-05-06",
             "contents": [turn.parts[0] for turn in request.history],
             "config": config,
         }
@@ -152,45 +166,74 @@ class AbstractToolExecutor:
                 error_details=f"An error occurred while executing tool '{call.name}': {str(e)}"
             )
 
-class DummyPrefs(UserPreferences):
-    user_id: str = Field(..., description="User ID")
-    time_zone: str = Field(default="Europe/Paris", description="Time zone")
-    working_hours: Dict[DayOfWeek, tuple] = Field(
-        default={
-            DayOfWeek.MONDAY: (time(9, 0), time(17, 0)),
-            DayOfWeek.TUESDAY: (time(9, 0), time(17, 0)),
-            DayOfWeek.WEDNESDAY: (time(9, 0), time(17, 0)),
-            DayOfWeek.THURSDAY: (time(9, 0), time(17, 0)),
-            DayOfWeek.FRIDAY: (time(9, 0), time(16, 0)),
-        },
-        description="Working hours for each day"
-    )
-    days_off: List[date] = Field(default=[date(2025, 1, 1)], description="Days off")
-    preferred_break_duration: timedelta = Field(
-        default=timedelta(minutes=5), description="Preferred break duration"
-    )
-    work_block_max_duration: timedelta = Field(
-        default=timedelta(hours=2), description="Maximum work block duration"
-    )
-    energy_levels: Dict[tuple, EnergyLevel] = Field(
-        default={
-            (time(9, 0), time(12, 0)): EnergyLevel.HIGH,
-            (time(13, 0), time(17, 0)): EnergyLevel.MEDIUM,
-        },
-        description="Energy levels throughout the day"
-    )
-    rest_preferences: Dict[str, tuple] = Field(
-        default={"sleep_schedule": (time(23, 59), time(5, 0))},
-        description="Rest preferences"
-    )
 
-# Dummy function to get preferences (replace with real implementation)
 async def get_user_preferences(user_id: str) -> UserPreferences:
-    logger.warning(f"Using DUMMY UserPreferences for user {user_id}")
-    # Need a minimal UserPreferences object that passes validation if used
+    """Retrieve user preferences from DynamoDB and convert them."""
+    def fetch() -> Optional[Dict[str, Any]]:
+        return db_get_user_preferences(user_id)
 
-    return DummyPrefs(user_id=user_id)
+    prefs_dict = await asyncio.to_thread(fetch)
+    if not prefs_dict:
+        return UserPreferences(user_id=user_id)
 
+    try:
+        working_hours: Dict[DayOfWeek, tuple] = {}
+        for key, hours in prefs_dict.get("working_hours", {}).items():
+            try:
+                day = DayOfWeek[int(key.split(".")[-1])]
+            except ValueError:
+                day = DayOfWeek(int(key))
+            start = datetime.strptime(hours["start"], "%H:%M").time()
+            end = datetime.strptime(hours["end"], "%H:%M").time()
+            working_hours[day] = (start, end)
+
+        meeting_times = [
+            (
+                datetime.strptime(t["start"], "%H:%M").time(),
+                datetime.strptime(t["end"], "%H:%M").time(),
+            )
+            for t in prefs_dict.get("preferred_meeting_times", [])
+        ]
+
+        days_off = [date.fromisoformat(d) for d in prefs_dict.get("days_off", [])]
+
+        activity = {
+            ActivityCategory(k): timedelta(minutes=v)
+            for k, v in prefs_dict.get("preferred_activity_duration", {}).items()
+        }
+
+        energy = {}
+        for k, level in prefs_dict.get("energy_levels", {}).items():
+            start_s, end_s = k.split("-")
+            energy[(datetime.strptime(start_s, "%H:%M").time(),
+                    datetime.strptime(end_s, "%H:%M").time())] = EnergyLevel(level)
+
+        return UserPreferences(
+            user_id=user_id,
+            time_zone=prefs_dict.get("time_zone", "UTC"),
+            working_hours=working_hours or None,
+            preferred_meeting_times=meeting_times,
+            days_off=days_off,
+            preferred_break_duration=timedelta(
+                minutes=prefs_dict.get("preferred_break_duration_minutes", 15)
+            ),
+            work_block_max_duration=timedelta(
+                minutes=prefs_dict.get("work_block_max_duration_minutes", 90)
+            ),
+            preferred_activity_duration=activity,
+            energy_levels=energy,
+            social_preferences=prefs_dict.get("social_preferences", {}),
+            rest_preferences=prefs_dict.get("rest_preferences", {}),
+            input_mode=InputMode(prefs_dict.get("input_mode", "text")),
+            voice_button_position=VoiceButtonPosition(
+                prefs_dict.get("voice_button_position", "right")
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to parse stored user preferences, falling back to defaults"
+        )
+        return UserPreferences(user_id=user_id)
 # Tool Registry
 from tool_wrappers import TOOL_REGISTRY
 
@@ -206,7 +249,7 @@ TOOL_DEFINITIONS: List[ToolDefinition] = [
 logger = logging.getLogger(__name__)
 
 # Configuration
-MAX_GEMINI_TURNS = 2 # Limit LLM calls per user prompt (User -> LLM -> Tool -> LLM -> User)
+# Removed MAX_GEMINI_TURNS - now we continue until final response with safety limit of 50 iterations
 
 async def handle_chat_request(
     request: ChatRequest,
@@ -231,8 +274,8 @@ async def handle_chat_request(
     session_id = request.session_id or str(uuid.uuid4())
     user_id = request.user_id
     prompt_text = request.prompt_text
-    turn_limit = MAX_GEMINI_TURNS
-    current_turn = 0
+    max_iterations = 12  # Safety limit to prevent infinite loops
+    current_iteration = 0
 
     try:
         # 8.1 Authentication: Assumed done by FastAPI dependency before calling this handler.
@@ -247,22 +290,31 @@ async def handle_chat_request(
              history = await session_manager.get_history(session_id)
 
         preferences = await get_user_preferences(user_id) # Task ORCH-9 (using dummy here)
+        system_prompt = build_system_instruction(preferences.time_zone)
 
         # Append current user prompt to history
-        user_turn = ConversationTurn.user_turn(prompt_text)
+        user_turn = ConversationTurn.user_turn(prompt_text, audio_url=request.audio_url)
         history.append(user_turn)
         await session_manager.append_turn(session_id, user_turn) # Persist user turn
 
         # 8.3 Get available tools (replace DUMMY with actual registry access)
         available_tools = TOOL_DEFINITIONS # Task ORCH-7
-
-        while current_turn < turn_limit:
-            current_turn += 1
-            logger.info(f"[Session: {session_id}] Gemini Turn {current_turn}/{turn_limit}")
+        definitive_response = None
+        while definitive_response == None:  # Continue until we get a final response
+            current_iteration += 1
+            
+            # Safety check to prevent infinite loops
+            if current_iteration > max_iterations:
+                logger.error(f"[Session: {session_id}] Reached maximum iteration limit ({max_iterations}). Breaking loop.")
+                break
+                
+            logger.info(f"[Session: {session_id}] Gemini Iteration {current_iteration}")
 
             # 8.4 Build request and send to Gemini
             gemini_request = GeminiRequest(history=history, tools=available_tools)
-            gemini_response = await gemini_client.send_to_gemini(gemini_request)
+            gemini_response = await gemini_client.send_to_gemini(
+                gemini_request, system_prompt
+            )
 
             # 8.5 Handle TEXT response
             if gemini_response.response_type == ResponseType.TEXT:
@@ -270,7 +322,7 @@ async def handle_chat_request(
                 model_turn = ConversationTurn.model_turn_text(gemini_response.text)
                 history.append(model_turn)
                 await session_manager.append_turn(session_id, model_turn) # Persist model turn
-                return ChatResponse(
+                definitive_response = ChatResponse(
                     session_id=session_id,
                     status=ResponseStatus.COMPLETED,
                     response_text=gemini_response.text
@@ -290,11 +342,40 @@ async def handle_chat_request(
                     preferences=preferences,
                     calendar_client=calendar_client
                 )
+                
+                # Generate execution ID and measure execution time
+                execution_id = str(uuid.uuid4())
+                start_time = time_module.time()
+                
                 tool_exec_result: ExecutorToolResult = tool_executor.execute_tool(
                     call=gemini_response.function_call,
                     context=exec_context
                 )
+                
+                # Calculate execution duration
+                end_time = time_module.time()
+                duration_ms = int((end_time - start_time) * 1000)
+                
                 logger.info(f"[Session: {session_id}] Tool execution result: {tool_exec_result.status}")
+                
+                # Save tool execution result to DynamoDB
+                save_result = save_tool_execution_result(
+                    session_id=session_id,
+                    execution_id=execution_id,
+                    user_id=user_id,
+                    tool_name=gemini_response.function_call.name,
+                    function_call={
+                        "name": gemini_response.function_call.name,
+                        "args": gemini_response.function_call.args
+                    },
+                    execution_result=tool_exec_result.result if tool_exec_result.result else {},
+                    status=tool_exec_result.status.value,
+                    error_details=tool_exec_result.error_details,
+                    duration_ms=duration_ms
+                )
+                
+                if save_result != "success":
+                    logger.warning(f"Failed to save tool execution result: {save_result}")
 
                 # 8.6.2 Format tool result for Gemini history
                 # Convert ExecutorToolResult into the ToolResult structure expected by Gemini API history
@@ -333,7 +414,7 @@ async def handle_chat_request(
                 await session_manager.append_turn(session_id, function_response_turn) # Persist tool result turn
 
                 # 8.6.3 & 8.6.4 - Loop back to call Gemini again with the tool result included in history
-                # The loop condition (current_turn < turn_limit) handles this.
+                # The loop will continue until Gemini provides a final text response
                 continue # Go to the next iteration of the while loop
 
             # Handle ERROR response from Gemini Client
@@ -350,23 +431,26 @@ async def handle_chat_request(
                  logger.error(f"[Session: {session_id}] Received unexpected response type from Gemini Client: {gemini_response.response_type}")
                  raise ValueError("Unexpected Gemini response type")
 
-        # If loop finishes without returning (hit turn limit)
-        logger.warning(f"[Session: {session_id}] Reached maximum Gemini turn limit ({turn_limit}).")
+        # If loop finishes without returning (hit iteration limit)
+        logger.warning(f"[Session: {session_id}] Reached maximum iteration limit ({max_iterations}).")
         # Return last known state or generic error/clarification
         # Check the last turn in history
+
+        if definitive_response:
+            return definitive_response
         last_turn = history[-1] if history else None
-        if last_turn and last_turn.role == ConversationRole.FUNCTION:
+        if last_turn and last_turn.role == ConversationRole.FUNCTION_CALL:
              # Last thing was a tool result, maybe model couldn't respond?
              return ChatResponse(
                  session_id=session_id,
                  status=ResponseStatus.ERROR,
-                 response_text="Sorry, I couldn't complete the request after processing the information. Please try rephrasing."
+                 response_text="Sorry, I couldn't complete the request after processing the information. The system reached its safety limit. Please try rephrasing your request."
              )
         # Fallback generic message
         return ChatResponse(
             session_id=session_id,
             status=ResponseStatus.ERROR,
-            response_text="Sorry, the request took too many steps to process. Please try simplifying your request."
+            response_text="Sorry, the request required too many processing steps and reached the safety limit. Please try simplifying your request."
         )
 
     except Exception as e:
